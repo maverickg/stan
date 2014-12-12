@@ -1,8 +1,8 @@
-#ifndef __TEST__UNIT_DISTRIBUTION__TEST_FIXTURE_HPP___
-#define __TEST__UNIT_DISTRIBUTION__TEST_FIXTURE_HPP___
+#ifndef TEST__UNIT_DISTRIBUTION__TEST_FIXTURE_HPP_
+#define TEST__UNIT_DISTRIBUTION__TEST_FIXTURE_HPP_
 
 #include <stdexcept>
-#include <stan/math/error_handling.hpp>
+#include <stan/error_handling.hpp>
 #include <stan/math/matrix.hpp>
 #include <stan/math/functions/value_of.hpp>
 #include <stan/agrad/rev.hpp>

@@ -13,11 +13,18 @@
 /doc/api
 /doc/*.pdf
 
-# temporary files
-*~
+# temporary latex files
 *.idx
 *.ilg
 *.ind
+*.fdb_latexmk
+*.fls
+
+# temporary emacs files
+*~
+\#*#
+auto/
+
 
 # depedencies files
 *.d
@@ -35,8 +42,14 @@ stan.kdev4
 !/src/models/**/makefile
 
 # tests: compiled models
-/src/test/test-models/**
-!/src/test/test-models/**.stan
+/src/test/test-models/*.cpp
+/src/test/test-models/*/*.cpp
+/src/test/test-models/*/*/*.cpp
+/src/test/test-models/*/*/*/*.cpp
+/src/test/test-models/*/*/*/*/*.cpp
+/src/test/test-models/*/*/*/*/*/*.cpp
+/src/test/test-models/*/*/*/*/*/*/*.cpp
+!/src/test/test-models/**/*.stan
 !/src/test/test-models/**/.gitignore
 
 # tests: generated agrad tests
@@ -44,3 +57,6 @@ stan.kdev4
 
 # For the Mac
 *.DS_Store
+
+# local make include
+make/local

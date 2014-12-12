@@ -1,5 +1,5 @@
-#ifndef __STAN__GM__PARSER__PROGRAM_GRAMMAR_DEF__HPP__
-#define __STAN__GM__PARSER__PROGRAM_GRAMMAR_DEF__HPP__
+#ifndef STAN__GM__PARSER__PROGRAM_GRAMMAR_DEF__HPP
+#define STAN__GM__PARSER__PROGRAM_GRAMMAR_DEF__HPP
 
 #include <cstddef>
 #include <iomanip>
@@ -13,6 +13,7 @@
 #include <vector>
 #include <stdexcept>
 
+#include <boost/format.hpp>
 #include <boost/spirit/include/qi.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/fusion/include/adapt_struct.hpp>
@@ -39,6 +40,7 @@
 #include <stan/gm/grammars/var_decls_grammar.hpp>
 #include <stan/gm/grammars/statement_grammar.hpp>
 #include <stan/gm/grammars/program_grammar.hpp>
+#include <stan/gm/grammars/functions_grammar.hpp>
 
 namespace {
   // hack to pass pair into macro below to adapt; in namespace to hide
@@ -50,6 +52,7 @@ namespace {
 
 
 BOOST_FUSION_ADAPT_STRUCT(stan::gm::program,
+                          (std::vector<stan::gm::function_decl_def>, function_decl_defs_)
                           (std::vector<stan::gm::var_decl>, data_decl_)
                           (DUMMY_STRUCT::type, derived_data_decl_)
                           (std::vector<stan::gm::var_decl>, parameter_decl_)
@@ -97,108 +100,64 @@ namespace stan {
         variable_map& vm,
         std::stringstream& error_msgs) const {
 
-        error_msgs << msg
-                   << std::endl;
-
         using boost::phoenix::construct;
         using boost::phoenix::val;
+        using boost::spirit::get_line;
+        using boost::format;
+        using std::setw;
 
-        std::basic_stringstream<char> pre_error_section;
-        pre_error_section << boost::make_iterator_range (_begin, _where);
-        char last_char;
-        std::string correct_section = "";
-        while (!pre_error_section.eof()) {
-          last_char = (char)pre_error_section.get();
-          correct_section += last_char;
-        }
+        error_msgs << msg << std::endl;
 
-        size_t indx = correct_section.size();
-        correct_section = correct_section.erase(indx-1, indx);
+        size_t idx_errline = 0;
+        idx_errline = get_line(_where);
 
-        //
-        //  Clean up whatever is before the error occurred
-        //
-        //  Would be better to use the parser to select which 
-        //  section in the stan file contains the parsing error.
-        //
+        if (idx_errline > 0) {
+          error_msgs << "ERROR at line " << idx_errline << std::endl;
 
-        std::vector<std::string> sections;
-        sections.push_back("generated");
-        sections.push_back("model");
-        sections.push_back("transformed");
-        sections.push_back("parameter");
-        sections.push_back("data");
+          std::basic_stringstream<char> sprogram;
+          sprogram << boost::make_iterator_range (_begin, _end);
 
-        //bool found_section = false; // FIXME: do something with found_section
-        indx = 0;
+          // show error in context 2 lines before, 1 lines after
+          size_t idx_errcol = 0;
+          idx_errcol = get_column(_begin,_where) - 1;
 
-        for (size_t i = 0; i < sections.size(); ++i) {
-          std::string section = sections[i];
-          indx = correct_section.find(section);
-          if (!(indx == std::string::npos)) {
-            if (i == 2) {
-              // Check which transformed block we're dealing with.
-              // If there is another transformed section, it must be
-              // a 'transformed parameters' section
-              size_t indx2 = correct_section.find("transformed", indx + 5);
-              if (!(indx2 == std::string::npos)) {
-                indx = indx2;
-              } else {
-                // No second transformed section, but maybe there
-                // is a parameter block?
-                indx2 = correct_section.find("parameters", indx2);
-                if (!(indx2 == std::string::npos)) {
-                  indx = indx2;
-                }
-                // Ok, we found a 'transformed data' block.
-                // indx is pointing at it.
+          std::string lineno = "";
+          format fmt_lineno("% 3d:    ");
+
+          std::string line_2before = "";
+          std::string line_before = "";
+          std::string line_err = "";
+          std::string line_after = "";            
+
+          size_t idx_line = 0;
+          size_t idx_before = idx_errline - 1;
+          if (idx_before > 0) {
+              // read lines up to error line, save 2 most recently read
+              while (idx_before > idx_line) {
+                line_2before = line_before;
+                std::getline(sprogram,line_before);  
+                idx_line++;
               }
-            }
-            //found_section = true;
-            correct_section = correct_section.erase(0, indx);
-            break;
+              if (line_2before.length() > 0) {
+                lineno = str(fmt_lineno % (idx_before - 1) );
+                error_msgs << lineno << line_2before << std::endl;
+              }
+              lineno = str(fmt_lineno % idx_before);
+              error_msgs << lineno << line_before << std::endl;
+          }
+
+          std::getline(sprogram,line_err);
+          lineno = str(fmt_lineno % idx_errline);
+          error_msgs << lineno << line_err << std::endl
+                     << setw(idx_errcol + lineno.length()) << "^" << std::endl;
+            
+          if (!sprogram.eof()) {
+            std::getline(sprogram,line_after);
+            lineno = str(fmt_lineno % (idx_errline+1));
+            error_msgs << lineno << line_after << std::endl;
           }
         }
-
-        //
-        //  Clean up whatever comes after the error occurred
-        //
-        std::basic_stringstream<char> error_section;
-        error_section << boost::make_iterator_range (_where, _end);
-        last_char = ' ';
-        std::string rest_of_section = "";
-        while (!error_section.eof() && !(last_char == '}')) {
-          last_char = (char)error_section.get();
-          rest_of_section += last_char;
-          //std::cout << rest_of_section.size() << std::endl;
-          if (error_section.eof() && rest_of_section.size() == 1) {
-            rest_of_section = "'end of file'";
-          }
-        }
-
-        if (!(get_line(_where) == std::string::npos)) {
-          error_msgs
-            << std::endl
-            << "LOCATION OF PARSING ERROR (line = "
-            << get_line(_where)
-            << ", position = "
-            << get_column(_begin, _where) - 1
-            <<  "):"
-            << std::endl
-            << std::endl
-            << "PARSED:"
-            << std::endl
-            << std::endl
-            << correct_section
-            << std::endl
-            << std::endl
-            << "EXPECTED: " << _info
-            << " BUT FOUND: " 
-            << std::endl
-            << std::endl
-            << rest_of_section
-            << std::endl;
-        }
+        error_msgs << std::endl;
       }
     };
     boost::phoenix::function<program_error> program_error_f;
@@ -211,7 +170,8 @@ namespace stan {
           error_msgs_(),
           expression_g(var_map_,error_msgs_),
           var_decls_g(var_map_,error_msgs_),
-          statement_g(var_map_,error_msgs_) {
+          statement_g(var_map_,error_msgs_),
+          functions_g(var_map_,error_msgs_) {
 
         using boost::spirit::qi::eps;
         using boost::spirit::qi::lit;
@@ -223,7 +183,8 @@ namespace stan {
 
         program_r.name("program");
         program_r 
-          %= -data_var_decls_r
+          %= -functions_g
+          > -data_var_decls_r
           > -derived_data_var_decls_r
           > -param_var_decls_r
           // scope lp__ to "transformed params" and "model" only
@@ -237,7 +198,7 @@ namespace stan {
         model_r.name("model declaration");
         model_r 
           %= lit("model")
-          > statement_g(true,local_origin)  // assign only to locals
+          > statement_g(true,local_origin,false)  // assign only to locals
           ;
 
         data_var_decls_r.name("data variable declarations");
@@ -253,7 +214,7 @@ namespace stan {
                >> lit("data") )
           > lit('{')
           > var_decls_g(true,transformed_data_origin)  // -constraints
-          > *statement_g(false,transformed_data_origin) // -sampling
+          > *statement_g(false,transformed_data_origin,false) // -sampling
           > lit('}');
 
         param_var_decls_r.name("parameter variable declarations");
@@ -269,7 +230,7 @@ namespace stan {
                >> lit("parameters") )
           > lit('{')
           > var_decls_g(true,transformed_parameter_origin) // -constraints
-          > *statement_g(false,transformed_parameter_origin) // -sampling
+          > *statement_g(false,transformed_parameter_origin,false) // -sampling
           > lit('}');
 
         generated_var_decls_r.name("generated variable declarations");
@@ -278,7 +239,7 @@ namespace stan {
           > lit("quantities")
           > lit('{')
           > var_decls_g(true,derived_origin) // -constraints
-          > *statement_g(false,derived_origin) // -sampling
+          > *statement_g(false,derived_origin,false) // -sampling
           > lit('}');
 
         using boost::spirit::qi::on_error;

@@ -1,5 +1,5 @@
-#ifndef __STAN__AGRAD__REV__MATRIX__LOG_SOFTMAX_HPP__
-#define __STAN__AGRAD__REV__MATRIX__LOG_SOFTMAX_HPP__
+#ifndef STAN__AGRAD__REV__MATRIX__LOG_SOFTMAX_HPP
+#define STAN__AGRAD__REV__MATRIX__LOG_SOFTMAX_HPP
 
 #include <cmath>
 #include <vector>
@@ -8,6 +8,7 @@
 #include <stan/math/matrix/log_softmax.hpp>
 #include <stan/math/matrix/softmax.hpp>
 #include <stan/agrad/rev/var.hpp>
+#include <stan/error_handling/matrix/check_nonzero_size.hpp>
 
 namespace stan {
   namespace agrad {
@@ -60,7 +61,7 @@ namespace stan {
       using Eigen::Matrix;
       using Eigen::Dynamic;
 
-      stan::math::validate_nonzero_size(alpha,"vector argument to var log_softmax");
+      stan::error_handling::check_nonzero_size("log_softmax", "alpha", alpha);
 
       if (alpha.size() == 0) 
         throw std::domain_error("arg vector to log_softmax() must have size > 0");

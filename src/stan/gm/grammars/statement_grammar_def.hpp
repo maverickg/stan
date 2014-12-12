@@ -1,5 +1,5 @@
-#ifndef __STAN__GM__PARSER__STATEMENT_GRAMMAR_DEF__HPP__
-#define __STAN__GM__PARSER__STATEMENT_GRAMMAR_DEF__HPP__
+#ifndef STAN__GM__PARSER__STATEMENT_GRAMMAR_DEF__HPP
+#define STAN__GM__PARSER__STATEMENT_GRAMMAR_DEF__HPP
 
 #include <cstddef>
 #include <iomanip>
@@ -58,7 +58,13 @@ BOOST_FUSION_ADAPT_STRUCT(stan::gm::for_statement,
                           (stan::gm::range, range_)
                           (stan::gm::statement, statement_) );
 
+BOOST_FUSION_ADAPT_STRUCT(stan::gm::return_statement,
+                          (stan::gm::expression, return_value_) );
+
 BOOST_FUSION_ADAPT_STRUCT(stan::gm::print_statement,
+                          (std::vector<stan::gm::printable>, printables_) );
+
+BOOST_FUSION_ADAPT_STRUCT(stan::gm::reject_statement,
                           (std::vector<stan::gm::printable>, printables_) );
 
 BOOST_FUSION_ADAPT_STRUCT(stan::gm::increment_log_prob_statement,
@@ -77,6 +83,44 @@ namespace stan {
 
   namespace gm {
 
+    struct validate_return_allowed {
+      template <typename T1, typename T2, typename T3>
+      struct result { typedef void type; };
+      void operator()(var_origin origin,
+                      bool& pass,
+                      std::ostream& error_msgs) const {
+        if (origin != function_argument_origin
+            && origin != function_argument_origin_lp
+            && origin != function_argument_origin_rng) {
+          error_msgs << "Returns only allowed from function bodies." << std::endl;
+          pass = false;
+          return;
+        }
+        pass = true;
+      }
+    };
+    boost::phoenix::function<validate_return_allowed> validate_return_allowed_f;
+
+    struct validate_void_return_allowed {
+      template <typename T1, typename T2, typename T3>
+      struct result { typedef void type; };
+      void operator()(var_origin origin,
+                      bool& pass,
+                      std::ostream& error_msgs) const {
+        if (origin != void_function_argument_origin
+            && origin != void_function_argument_origin_lp
+            && origin != void_function_argument_origin_rng) {
+          error_msgs << "Void returns only allowed from function bodies of void return type." 
+                     << std::endl;
+          pass = false;
+          return;
+        }
+        pass = true;
+      }
+    };
+    boost::phoenix::function<validate_void_return_allowed> validate_void_return_allowed_f;
+
+
     struct validate_assignment {
       template <typename T1, typename T2, typename T3, typename T4>
       struct result { typedef bool type; };
@@ -84,7 +128,7 @@ namespace stan {
       bool operator()(assignment& a,
                       const var_origin& origin_allowed,
                       variable_map& vm,
-                      std::stringstream& error_msgs) const {
+                      std::ostream& error_msgs) const {
 
         // validate existence
         std::string name = a.var_dims_.name_;
@@ -94,7 +138,7 @@ namespace stan {
                      << std::endl;
           return false;
         }
-        
+
         // validate origin
         var_origin lhs_origin = vm.get_origin(name);
         if (lhs_origin != local_origin
@@ -105,6 +149,21 @@ namespace stan {
           error_msgs << std::endl;
           return false;
         }
+
+        // enforce constancy of function args
+        if (lhs_origin == function_argument_origin
+            || lhs_origin == function_argument_origin_lp
+            || lhs_origin == function_argument_origin_rng
+            || lhs_origin == void_function_argument_origin
+            || lhs_origin == void_function_argument_origin_lp
+            || lhs_origin == void_function_argument_origin_rng) {
+          error_msgs << "Illegal to assign to function argument variables."
+                     << std::endl
+                     << "Use local variables instead."
+                     << std::endl;
+          return false;
+        }
+            
 
         // validate types
         a.var_type_ = vm.get(name);
@@ -119,31 +178,37 @@ namespace stan {
           error_msgs << "too many indexes for variable " 
                      << "; variable name = " << name
                      << "; num dimensions given = " << num_index_dims
-                     << "; variable array dimensions = " << lhs_var_num_dims;
-          return false;
-        }
-        if (lhs_type.num_dims_ != a.expr_.expression_type().num_dims_) {
-          error_msgs << "mismatched dimensions on left- and right-hand side of assignment"
-                     << "; left dims=" << lhs_type.num_dims_
-                     << "; right dims=" << a.expr_.expression_type().num_dims_
+                     << "; variable array dimensions = " << lhs_var_num_dims
                      << std::endl;
           return false;
         }
 
         base_expr_type lhs_base_type = lhs_type.base_type_;
         base_expr_type rhs_base_type = a.expr_.expression_type().base_type_;
-        // int -> double promotion
+        // allow int -> double promotion
         bool types_compatible 
           = lhs_base_type == rhs_base_type
           || ( lhs_base_type == DOUBLE_T && rhs_base_type == INT_T );
         if (!types_compatible) {
           error_msgs << "base type mismatch in assignment"
-                     << "; left variable=" << a.var_dims_.name_
-                     << "; left base type=";
+                     << "; variable name = "
+                     << a.var_dims_.name_
+                     << ", type = ";
           write_base_expr_type(error_msgs,lhs_base_type);
-          error_msgs << "; right base type=";
+          error_msgs << "; right-hand side type=";
           write_base_expr_type(error_msgs,rhs_base_type);
           error_msgs << std::endl;
+          return false;
+        }
+        if (lhs_type.num_dims_ != a.expr_.expression_type().num_dims_) {
+          error_msgs << "dimension mismatch in assignment"
+                     << "; variable name = "
+                     << a.var_dims_.name_
+                     << ", num dimensions given = "
+                     << lhs_type.num_dims_
+                     << "; right-hand side dimensions = "
+                     << a.expr_.expression_type().num_dims_
+                     << std::endl;
           return false;
         }
         return true;
@@ -180,6 +245,18 @@ namespace stan {
           error_msgs << "unknown distribution=" << s.dist_.family_ << std::endl;
           return false;
         }
+
+        if (function_name == "lkj_cov_log") {
+          error_msgs << "Warning: the lkj_cov_log() sampling distribution"
+                     << " is deprecated.  It will be removed in Stan 3."
+                     << std::endl
+                     << "Code LKJ covariance in terms of an lkj_corr()"
+                     << " distribution on a correlation matrix"
+                     << " and independent lognormals on the scales."
+                     << std::endl << std::endl;
+
+        }
+
         // test for LHS not being purely a variable
         if (has_non_param_var(s.expr_,var_map)) {
           // FIXME:  really want to get line numbers in here too
@@ -295,24 +372,29 @@ namespace stan {
       void operator()(bool& pass,
                       const stan::gm::expression& expr,
                       std::stringstream& error_msgs) const {
-        error_msgs << "Illegal statement beginning with expression parsed as"
-                   << std::endl << "  ";
-        generate_expression(expr.expr_,error_msgs);
-        error_msgs << std::endl
-           << "Not a legal assignment or sampling statement.  Note that"
-           << std::endl
-           << "  * Assignment statements only allow variables (with optional indexes) on the left;"
-           << std::endl
-           << "    if you see an outer function logical_lt (<) with negated (-) second argument,"
-           << std::endl
-           << "    it indicates an assignment statement A <- B with illegal left"
-           << std::endl
-           << "    side A parsed as expression (A < (-B))."
-           << std::endl
-           << "  * Sampling statements allow arbitrary value-denoting expressions on the left."
-           << std::endl
-           << std::endl << std::endl;
-        pass = false;
+        if (expr.expression_type() != VOID_T) {
+          error_msgs << "Illegal statement beginning with non-void expression parsed as"
+                     << std::endl << "  ";
+          generate_expression(expr.expr_,error_msgs);
+          error_msgs << std::endl
+                     << "Not a legal assignment, sampling, or function statement.  Note that"
+                     << std::endl
+                     << "  * Assignment statements only allow variables (with optional indexes) on the left;"
+                     << std::endl
+                     << "    if you see an outer function logical_lt (<) with negated (-) second argument,"
+                     << std::endl
+                     << "    it indicates an assignment statement A <- B with illegal left"
+                     << std::endl
+                     << "    side A parsed as expression (A < (-B))."
+                     << std::endl
+                     << "  * Sampling statements allow arbitrary value-denoting expressions on the left."
+                     << std::endl
+                     << "  * Functions used as statements must be declared to have void returns"
+                     << std::endl << std::endl;
+          pass = false;
+          return;
+        }
+        pass = true;
       }
     };
     boost::phoenix::function<expression_as_statement> expression_as_statement_f;
@@ -425,6 +507,21 @@ namespace stan {
     };
     boost::phoenix::function<validate_allow_sample> validate_allow_sample_f;
 
+    struct validate_non_void_expression {
+      template <typename T1, typename T2, typename T3>
+      struct result { typedef void type; };
+      
+      void operator()(const expression& e, 
+                      bool& pass, 
+                      std::ostream& error_msgs) const {
+        pass = !e.expression_type().is_void();
+        if (!pass) {
+          error_msgs << "attempt to increment log prob with void expression" << std::endl;
+        }
+      }
+    };
+    boost::phoenix::function<validate_non_void_expression> validate_non_void_expression_f;
+    
 
     template <typename Iterator>
     statement_grammar<Iterator>::statement_grammar(variable_map& var_map,
@@ -448,33 +545,36 @@ namespace stan {
       using boost::spirit::qi::labels::_a;
       using boost::spirit::qi::labels::_r1;
       using boost::spirit::qi::labels::_r2;
+      using boost::spirit::qi::labels::_r3;
 
-      // _r1 true if sample_r allowed (inherited)
-      // _r2 source of variables allowed for assignments
-      // set to true if sample_r are allowed
+      // inherited features
+      //   _r1 true if sample_r allowed
+      //   _r2 source of variables allowed for assignments
+      //   _r3 true if return_r allowed 
       statement_r.name("statement");
       statement_r
         %= no_op_statement_r                        // key ";"
-        | statement_seq_r(_r1,_r2)                  // key "{"
-        | increment_log_prob_statement_r(_r2)       // key "increment"
-        | for_statement_r(_r1,_r2)                  // key "for"
-        | while_statement_r(_r1,_r2)                // key "while"
-        | statement_2_g(_r1,_r2)                    // key "if"
+        | statement_seq_r(_r1,_r2,_r3)              // key "{"
+        | increment_log_prob_statement_r(_r1,_r2)   // key "increment_log_prob"
+        | for_statement_r(_r1,_r2,_r3)              // key "for"
+        | while_statement_r(_r1,_r2,_r3)            // key "while"
+        | statement_2_g(_r1,_r2,_r3)                // key "if"
         | print_statement_r(_r2)                    // key "print"
+        | reject_statement_r(_r2)                   // key "reject"
+        | return_statement_r(_r2)                   // key "return"
+        | void_return_statement_r(_r2)              // key "return"
         | assignment_r(_r2)                         // lvalue "<-"
-        // [_pass = validate_assignment_f(_1,_r2,boost::phoenix::ref(var_map_),
-        // boost::phoenix::ref(error_msgs_))]
         | sample_r(_r1,_r2)                         // expression "~"
         | expression_g(_r2)                         // expression
           [expression_as_statement_f(_pass,_1,boost::phoenix::ref(error_msgs_))]
         ;
 
-      // _r1, _r2 same as statement_r
+      // _r1, _r2, _r3 same as statement_r
       statement_seq_r.name("sequence of statements");
       statement_seq_r
         %= lit('{')
         > local_var_decls_r[_a = _1]
-        > *statement_r(_r1,_r2)
+        > *statement_r(_r1,_r2,_r3)
         > lit('}')
         > eps[unscope_locals_f(_a,boost::phoenix::ref(var_map_))]
         ;
@@ -482,15 +582,20 @@ namespace stan {
       local_var_decls_r
         %= var_decls_g(false,local_origin); // - constants
 
+      // inherited  _r1 = true if samples allowed as statements
       increment_log_prob_statement_r.name("increment log prob statement");
       increment_log_prob_statement_r
-        = lit("increment_log_prob")
+        %= lit("increment_log_prob") 
+        > eps[ validate_allow_sample_f(_r1,_pass,
+                                       boost::phoenix::ref(error_msgs_)) ]
         > lit('(')
-        > expression_g(_r1)
+        > expression_g(_r2) [ validate_non_void_expression_f(_1,_pass,
+                                                             boost::phoenix::ref(error_msgs_)) ]
         > lit(')')
         > lit(';') 
         ;
 
+      // _r1, _r2, _r3 same as statement_r
       while_statement_r.name("while statement");
       while_statement_r
         = lit("while")
@@ -499,12 +604,12 @@ namespace stan {
           [_pass = add_while_condition_f(_val,_1,
                                          boost::phoenix::ref(error_msgs_))]
         > lit(')')
-        > statement_r(_r1,_r2)
+        > statement_r(_r1,_r2,_r3)
           [add_while_body_f(_val,_1)]
         ;
       
 
-      // _r1, _r2 same as statement_r
+      // _r1, _r2, _r3 same as statement_r
       for_statement_r.name("for statement");
       for_statement_r
         %= lit("for")
@@ -516,7 +621,7 @@ namespace stan {
         > lit("in")
         > range_r(_r2)
         > lit(')')
-        > statement_r(_r1,_r2)
+        > statement_r(_r1,_r2,_r3)
         > eps 
         [remove_loop_identifier_f(_a,boost::phoenix::ref(var_map_))];
       ;
@@ -524,6 +629,14 @@ namespace stan {
       print_statement_r.name("print statement");
       print_statement_r
         %= lit("print")
+        > lit('(')
+        > (printable_r(_r1) % ',')
+        > lit(')');
+
+      // reject
+      reject_statement_r.name("reject statement");
+      reject_statement_r
+        %= lit("reject")
         > lit('(')
         > (printable_r(_r1) % ',')
         > lit(')');
@@ -596,12 +709,14 @@ namespace stan {
                                      boost::phoenix::ref(var_map_),
                                      boost::phoenix::ref(error_msgs_))]
         ;
+
       distribution_r.name("distribution and parameters");
       distribution_r
         %= ( identifier_r
              >> lit('(')
              >> -(expression_g(_r1) % ',') )
-        > lit(')');
+        > lit(')')
+        ;
 
       truncation_range_r.name("range pair");
       truncation_range_r
@@ -610,7 +725,25 @@ namespace stan {
         > -expression_g(_r1)
         > lit(',')
         > -expression_g(_r1)
-        > lit(']');
+        > lit(']')
+        ;
+
+      // _r1 = allow sampling, _r2 = var origin
+      return_statement_r.name("return statement");
+      return_statement_r
+        %= lit("return")
+        >> expression_g(_r1)
+        >> lit(';') [ validate_return_allowed_f(_r1,_pass,
+                                                boost::phoenix::ref(error_msgs_)) ]
+        ;
+
+      // _r1 = var origin
+      void_return_statement_r.name("void return statement");
+      void_return_statement_r
+        = lit("return")[_val = expression()]
+        >> lit(';') [ validate_void_return_allowed_f(_r1,_pass,
+                                                     boost::phoenix::ref(error_msgs_)) ]
+        ;
 
       no_op_statement_r.name("no op statement");
       no_op_statement_r 

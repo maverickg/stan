@@ -1,5 +1,5 @@
-#ifndef __STAN__COMMON__COMMAND_HPP__
-#define __STAN__COMMON__COMMAND_HPP__
+#ifndef STAN__COMMON__COMMAND_HPP
+#define STAN__COMMON__COMMAND_HPP
 
 #include <fstream>
 #include <stdexcept>
@@ -12,6 +12,7 @@
 #include <stan/version.hpp>
 #include <stan/io/cmd_line.hpp>
 #include <stan/io/dump.hpp>
+#include <stan/io/json.hpp>
 #include <stan/io/mcmc_writer.hpp>
 
 #include <stan/gm/arguments/argument_parser.hpp>
@@ -32,7 +33,6 @@
 #include <stan/model/util.hpp>
 
 #include <stan/optimization/newton.hpp>
-#include <stan/optimization/nesterov_gradient.hpp>
 #include <stan/optimization/bfgs.hpp>
 
 #include <stan/common/write_iteration_csv.hpp>
@@ -41,6 +41,7 @@
 #include <stan/common/write_model.hpp>
 #include <stan/common/write_error_msg.hpp>
 #include <stan/common/do_print.hpp>
+#include <stan/common/do_bfgs_optimize.hpp>
 #include <stan/common/print_progress.hpp>
 #include <stan/common/run_markov_chain.hpp>
 #include <stan/common/warmup.hpp>
@@ -49,10 +50,18 @@
 #include <stan/common/init_nuts.hpp>
 #include <stan/common/init_adapt.hpp>
 #include <stan/common/init_windowed_adapt.hpp>
+#include <stan/common/recorder/csv.hpp>
+#include <stan/common/recorder/messages.hpp>
+#include <stan/common/initialize_state.hpp>
+#include <stan/common/context_factory.hpp>
 
 namespace stan {
 
   namespace common {
+
+    struct NoOpFunctor {
+      void operator()() { }
+    };
 
     template <class Model>
     int command(int argc, const char* argv[]) {
@@ -74,9 +83,6 @@ namespace stan {
       
       if (parser.help_printed())
         return err_code;
-
-      parser.print(&std::cout);
-      std::cout << std::endl;
       
       // Identification
       unsigned int id = dynamic_cast<stan::gm::int_argument*>(parser.arg("id"))->value();
@@ -151,6 +157,9 @@ namespace stan {
 
       Eigen::VectorXd cont_params = Eigen::VectorXd::Zero(model.num_params_r());
 
+      parser.print(&std::cout);
+      std::cout << std::endl;
+      
       if (output_stream) {
         write_stan(output_stream, "#");
         write_model(output_stream, model.model_name(), "#");
@@ -163,149 +172,14 @@ namespace stan {
         parser.print(diagnostic_stream, "#");
       }
       
-      int num_init_tries = -1;
-      
       std::string init = dynamic_cast<stan::gm::string_argument*>(
                          parser.arg("init"))->value();
       
-      try {
-        
-        double R = std::fabs(boost::lexical_cast<double>(init));
-        
-        if (R == 0) {
-          
-          cont_params.setZero();
-          
-          double init_log_prob;
-          Eigen::VectorXd init_grad = Eigen::VectorXd::Zero(model.num_params_r());
-          
-          try {
-            stan::model::gradient(model, cont_params, init_log_prob, init_grad, &std::cout);
-          } catch (const std::exception& e) {
-            std::cout << "Rejecting initialization at zero because of gradient failure."
-                      << std::endl 
-                      << e.what() << std::endl;
-            return stan::gm::error_codes::OK;
-          }
-          
-          if (!boost::math::isfinite(init_log_prob)) {
-            std::cout << "Rejecting initialization at zero because of vanishing density." 
-                      << std::endl;
-            return 0;
-          }
-          
-          for (int i = 0; i < init_grad.size(); ++i) {
-            if (!boost::math::isfinite(init_grad[i])) {
-              std::cout << "Rejecting initialization at zero because of divergent gradient."
-                        << std::endl;
-              return 0;
-            }
-          }
-
-        } else {
-          
-          boost::random::uniform_real_distribution<double>
-          init_range_distribution(-R, R);
-          
-          boost::variate_generator<rng_t&,
-          boost::random::uniform_real_distribution<double> >
-          init_rng(base_rng, init_range_distribution);
-          
-          cont_params.setZero();
-          
-          // Random initializations until log_prob is finite
-          Eigen::VectorXd init_grad = Eigen::VectorXd::Zero(model.num_params_r());
-          static int MAX_INIT_TRIES = 100;
-          
-          for (num_init_tries = 1; num_init_tries <= MAX_INIT_TRIES; ++num_init_tries) {
-            
-            for (int i = 0; i < cont_params.size(); ++i)
-              cont_params(i) = init_rng();
-            
-            // FIXME: allow config vs. std::cout
-            double init_log_prob;
-            try {
-              stan::model::gradient(model, cont_params, init_log_prob, init_grad, &std::cout);
-            } catch (const std::exception& e) {
-              write_error_msg(&std::cout, e);
-              std::cout << "Rejecting proposed initial value with zero density." 
-                        << std::endl;
-              init_log_prob = -std::numeric_limits<double>::infinity();
-            }
-            
-            if (!boost::math::isfinite(init_log_prob))
-              continue;
-            for (int i = 0; i < init_grad.size(); ++i)
-              if (!boost::math::isfinite(init_grad(i)))
-                continue;
-            break;
-            
-          }
-          
-          if (num_init_tries > MAX_INIT_TRIES) {
-            std::cout << std::endl << std::endl
-                      << "Initialization between (" << -R << ", " << R << ") failed after "
-                      << MAX_INIT_TRIES << " attempts. " << std::endl;
-            std::cout << " Try specifying initial values,"
-                      << " reducing ranges of constrained values,"
-                      << " or reparameterizing the model."
-                      << std::endl;
-            return -1;
-          }
-          
-        }
-        
-      } catch(...) {
-      
-        try {
-        
-          std::fstream init_stream(init.c_str(), std::fstream::in);
-          if (init_stream.fail()) {
-            std::string msg("ERROR: specified initialization file does not exist: ");
-            msg += init;
-            throw std::invalid_argument(msg);
-          }
-          
-          stan::io::dump init_var_context(init_stream);
-          init_stream.close();
-          model.transform_inits(init_var_context, cont_params);
-        
-        } catch (const std::exception& e) {
-          std::cerr << "Error during user-specified initialization:" << std::endl
-                    << e.what() << std::endl;
-          return -5;
-        }
-        
-        double init_log_prob;
-        Eigen::VectorXd init_grad = Eigen::VectorXd::Zero(model.num_params_r());
-        
-        try {
-          stan::model::gradient(model, cont_params, init_log_prob, init_grad, &std::cout);
-        } catch (const std::exception& e) {
-          std::cout 
-            << "Rejecting user-specified initialization because of gradient failure."
-            << std::endl
-            << e.what() << std::endl;
-          return 0;
-        }
-        
-        if (!boost::math::isfinite(init_log_prob)) {
-          std::cout 
-            << "Rejecting user-specified initialization because of vanishing density."
-            << std::endl;
-          return 0;
-        }
-        
-        for (int i = 0; i < init_grad.size(); ++i) {
-          if (!boost::math::isfinite(init_grad[i])) {
-            std::cout 
-              << "Rejecting user-specified initialization because of divergent gradient."
-              << std::endl;
-            return 0;
-          }
-        }
-        
-      }
+      dump_factory var_context_factory;
+      if (!initialize_state<dump_factory>
+          (init, cont_params, model, base_rng, &std::cout,
+           var_context_factory))
+        return stan::gm::error_codes::SOFTWARE;
       
       //////////////////////////////////////////////////
       //               Model Diagnostics              //
@@ -387,45 +261,7 @@ namespace stan {
 
         double lp(0);
         int return_code = stan::gm::error_codes::CONFIG;
-        if (algo->value() == "nesterov") {
-          bool epsilon = dynamic_cast<stan::gm::real_argument*>(
-                         algo->arg("nesterov")->arg("stepsize"))->value();
-          
-          
-          stan::optimization::NesterovGradient<Model> ng(model, cont_vector, disc_vector,
-                                                         epsilon, &std::cout);
-          
-          lp = ng.logp();
-          
-          double lastlp = lp - 1;
-          std::cout << "Initial log joint probability = " << lp << std::endl;
-          if (output_stream && save_iterations) {
-            write_iteration(*output_stream, model, base_rng,
-                            lp, cont_vector, disc_vector);
-          }
-
-          int m = 0;
-          for (int i = 0; i < num_iterations; i++) {
-            lastlp = lp;
-            lp = ng.step();
-            ng.params_r(cont_vector);
-            if (do_print(i, refresh)) {
-              std::cout << "Iteration ";
-              std::cout << std::setw(2) << (m + 1) << ". ";
-              std::cout << "Log joint probability = " << std::setw(10) << lp;
-              std::cout << ". Improved by " << (lp - lastlp) << ".";
-              std::cout << std::endl;
-              std::cout.flush();
-            }
-            m++;
-            if (output_stream && save_iterations) {
-              write_iteration(*output_stream, model, base_rng,
-                              lp, cont_vector, disc_vector);
-            }
-
-          }
-          return_code = stan::gm::error_codes::OK;
-        } else if (algo->value() == "newton") {
+        if (algo->value() == "newton") {
           std::vector<double> gradient;
           try {
             lp = model.template log_prob<false, false>(cont_vector, disc_vector, &std::cout);
@@ -463,79 +299,55 @@ namespace stan {
           }
           return_code = stan::gm::error_codes::OK;
         } else if (algo->value() == "bfgs") {
-          
-          stan::optimization::BFGSLineSearch<Model> bfgs(model, cont_vector, disc_vector,
-                                                         &std::cout);
-          bfgs._opts.alpha0 = dynamic_cast<stan::gm::real_argument*>(
-                         algo->arg("bfgs")->arg("init_alpha"))->value();
-          bfgs._opts.tolF = dynamic_cast<stan::gm::real_argument*>(
-                         algo->arg("bfgs")->arg("tol_obj"))->value();
-          bfgs._opts.tolGrad = dynamic_cast<stan::gm::real_argument*>(
-                         algo->arg("bfgs")->arg("tol_grad"))->value();
-          bfgs._opts.tolX = dynamic_cast<stan::gm::real_argument*>(
-                         algo->arg("bfgs")->arg("tol_param"))->value();
-          bfgs._opts.maxIts = num_iterations;
-          
-          lp = bfgs.logp();
-          
-          std::cout << "initial log joint probability = " << lp << std::endl;
-          if (output_stream && save_iterations) {
-            write_iteration(*output_stream, model, base_rng,
-                            lp, cont_vector, disc_vector);
-          }
+          NoOpFunctor callback;
+          typedef stan::optimization::BFGSLineSearch<Model,stan::optimization::BFGSUpdate_HInv<> > Optimizer;
+          Optimizer bfgs(model, cont_vector, disc_vector, &std::cout);
 
-          int ret = 0;
+          bfgs._ls_opts.alpha0 = dynamic_cast<stan::gm::real_argument*>(
+                         algo->arg("bfgs")->arg("init_alpha"))->value();
+          bfgs._conv_opts.tolAbsF = dynamic_cast<stan::gm::real_argument*>(
+                         algo->arg("bfgs")->arg("tol_obj"))->value();
+          bfgs._conv_opts.tolRelF = dynamic_cast<stan::gm::real_argument*>(
+                         algo->arg("bfgs")->arg("tol_rel_obj"))->value();
+          bfgs._conv_opts.tolAbsGrad = dynamic_cast<stan::gm::real_argument*>(
+                         algo->arg("bfgs")->arg("tol_grad"))->value();
+          bfgs._conv_opts.tolRelGrad = dynamic_cast<stan::gm::real_argument*>(
+                         algo->arg("bfgs")->arg("tol_rel_grad"))->value();
+          bfgs._conv_opts.tolAbsX = dynamic_cast<stan::gm::real_argument*>(
+                         algo->arg("bfgs")->arg("tol_param"))->value();
+          bfgs._conv_opts.maxIts = num_iterations;
           
-          while (ret == 0) {  
-            if (do_print(bfgs.iter_num(), 50*refresh)) {
-              std::cout << "    Iter ";
-              std::cout << "     log prob ";
-              std::cout << "       ||dx|| ";
-              std::cout << "     ||grad|| ";
-              std::cout << "      alpha ";
-// MAB: commented out but left in because it may be useful for debugging in the future
-//              std::cout << "     alpha0 ";
-              std::cout << " # evals ";
-              std::cout << " Notes " << std::endl;
-            }
-            
-            ret = bfgs.step();
-            lp = bfgs.logp();
-            bfgs.params_r(cont_vector);
-            
-            if (do_print(bfgs.iter_num(), ret != 0 || !bfgs.note().empty(),refresh)) {
-              std::cout << " " << std::setw(7) << bfgs.iter_num() << " ";
-              std::cout << " " << std::setw(12) << std::setprecision(6) 
-                        << lp << " ";
-              std::cout << " " << std::setw(12) << std::setprecision(6) 
-                        << bfgs.prev_step_size() << " ";
-              std::cout << " " << std::setw(12) << std::setprecision(6) 
-                        << bfgs.curr_g().norm() << " ";
-              std::cout << " " << std::setw(10) << std::setprecision(4) 
-                        << bfgs.alpha() << " ";
-              // std::cout << " " << std::setw(10) << std::setprecision(4) 
-              // << bfgs.alpha0() << " ";
-              std::cout << " " << std::setw(7) 
-                        << bfgs.grad_evals() << " ";
-              std::cout << " " << bfgs.note() << " ";
-              std::cout << std::endl;
-            }
-            
-            if (output_stream && save_iterations) {
-              write_iteration(*output_stream, model, base_rng,
-                              lp, cont_vector, disc_vector);
-            }
-          }
-          
-          
-          if (ret >= 0) {
-            std::cout << "Optimization terminated normally: " << std::endl;
-            return_code = stan::gm::error_codes::OK;
-          } else {
-            std::cout << "Optimization terminated with error: " << std::endl;
-            return_code = stan::gm::error_codes::SOFTWARE;
-          }
-          std::cout << "  " << bfgs.get_code_string(ret) << std::endl;
+          return_code = do_bfgs_optimize(model,bfgs, base_rng,
+                                         lp, cont_vector, disc_vector,
+                                         output_stream, &std::cout, 
+                                         save_iterations, refresh,
+                                         callback);
+        } else if (algo->value() == "lbfgs") {
+          NoOpFunctor callback;
+          typedef stan::optimization::BFGSLineSearch<Model,stan::optimization::LBFGSUpdate<> > Optimizer;
+          Optimizer bfgs(model, cont_vector, disc_vector, &std::cout);
+
+          bfgs.get_qnupdate().set_history_size(dynamic_cast<gm::int_argument*>(
+                         algo->arg("lbfgs")->arg("history_size"))->value());
+          bfgs._ls_opts.alpha0 = dynamic_cast<gm::real_argument*>(
+                         algo->arg("lbfgs")->arg("init_alpha"))->value();
+          bfgs._conv_opts.tolAbsF = dynamic_cast<gm::real_argument*>(
+                         algo->arg("lbfgs")->arg("tol_obj"))->value();
+          bfgs._conv_opts.tolRelF = dynamic_cast<gm::real_argument*>(
+                         algo->arg("lbfgs")->arg("tol_rel_obj"))->value();
+          bfgs._conv_opts.tolAbsGrad = dynamic_cast<gm::real_argument*>(
+                         algo->arg("lbfgs")->arg("tol_grad"))->value();
+          bfgs._conv_opts.tolRelGrad = dynamic_cast<gm::real_argument*>(
+                         algo->arg("lbfgs")->arg("tol_rel_grad"))->value();
+          bfgs._conv_opts.tolAbsX = dynamic_cast<gm::real_argument*>(
+                         algo->arg("lbfgs")->arg("tol_param"))->value();
+          bfgs._conv_opts.maxIts = num_iterations;
+
+          return_code = do_bfgs_optimize(model,bfgs, base_rng,
+                                         lp, cont_vector, disc_vector,
+                                         output_stream, &std::cout, 
+                                         save_iterations, refresh,
+                                         callback);
         } else {
           return_code = stan::gm::error_codes::CONFIG;
         }
@@ -573,7 +385,14 @@ namespace stan {
         std::cout << "Adjust your expectations accordingly!" << std::endl << std::endl;
         std::cout << std::endl;
         
-        stan::io::mcmc_writer<Model> writer(output_stream, diagnostic_stream, &std::cout);
+        stan::common::recorder::csv sample_recorder(output_stream, "# ");
+        stan::common::recorder::csv diagnostic_recorder(diagnostic_stream, "# ");
+        stan::common::recorder::messages message_recorder(&std::cout, "# ");
+        
+        stan::io::mcmc_writer<Model, 
+                              stan::common::recorder::csv, stan::common::recorder::csv,
+                              stan::common::recorder::messages> 
+          writer(sample_recorder, diagnostic_recorder, message_recorder, &std::cout);
         
         // Sampling parameters
         int num_warmup = dynamic_cast<stan::gm::int_argument*>(
@@ -603,12 +422,12 @@ namespace stan {
                                       parser.arg("method")->arg("sample")->arg("adapt"));
         bool adapt_engaged = dynamic_cast<stan::gm::bool_argument*>(adapt->arg("engaged"))->value();
         
-	if (model.num_params_r() == 0 && algo->value() != "fixed_param") {
-	  std::cout
-	    << "Must use algorithm=fixed_param for model that has no parameters."
-	    << std::endl;
-	  return -1;
-	}      
+        if (model.num_params_r() == 0 && algo->value() != "fixed_param") {
+          std::cout
+            << "Must use algorithm=fixed_param for model that has no parameters."
+            << std::endl;
+          return -1;
+        }      
 
         if (algo->value() == "fixed_param") {
           
@@ -756,37 +575,45 @@ namespace stan {
         }
         
         // Headers
-        writer.print_sample_names(s, sampler_ptr, model);
-        writer.print_diagnostic_names(s, sampler_ptr, model);
+        writer.write_sample_names(s, sampler_ptr, model);
+        writer.write_diagnostic_names(s, sampler_ptr, model);
         
+        std::string prefix = "";
+        std::string suffix = "\n";
+        NoOpFunctor startTransitionCallback;
+
         // Warm-Up
         clock_t start = clock();
         
         warmup<Model, rng_t>(sampler_ptr, num_warmup, num_samples, num_thin,
                              refresh, save_warmup,
                              writer,
-                             s, model, base_rng);
+                             s, model, base_rng,
+                             prefix, suffix, std::cout,
+                             startTransitionCallback);
         
         clock_t end = clock();
         warmDeltaT = (double)(end - start) / CLOCKS_PER_SEC;
         
         if (adapt_engaged) {
           dynamic_cast<mcmc::base_adapter*>(sampler_ptr)->disengage_adaptation();
-          writer.print_adapt_finish(sampler_ptr);
+          writer.write_adapt_finish(sampler_ptr);
         }
         
         // Sampling
         start = clock();
         
-        sample<Model, rng_t>(sampler_ptr, num_warmup, num_samples, num_thin,
-                                       refresh, true,
-                                       writer,
-                                       s, model, base_rng);
+        stan::common::sample<Model, rng_t>(sampler_ptr, num_warmup, num_samples, num_thin,
+                             refresh, true,
+                             writer,
+                             s, model, base_rng,
+                             prefix, suffix, std::cout,
+                             startTransitionCallback);
         
         end = clock();
         sampleDeltaT = (double)(end - start) / CLOCKS_PER_SEC;
         
-        writer.print_timing(warmDeltaT, sampleDeltaT);
+        writer.write_timing(warmDeltaT, sampleDeltaT);
         
         if (sampler_ptr) delete sampler_ptr;
         
