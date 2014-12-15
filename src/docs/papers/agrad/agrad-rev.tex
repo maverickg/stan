@@ -1,0 +1,590 @@
+\documentclass[10pt]{article}
+\usepackage{stan-papers}
+
+\title{\Large\bfseries The \code{\bfseries stan::agrad} C++ Automatic
+  Differentiation Library}
+
+\author{\large Bob Carpenter \\ {\small Columbia University}
+        \\[8pt]
+        \large Marcus Brubaker \\ {\small Toyota Technical Institute}
+   \and \large Matt Hoffman \\ {\small Adobe Research Labs}
+        \\[8pt]
+        \large Peter Li \\ {\small Columbia University}
+   \and \large Daniel Lee \\ {\small Columbia University}
+        \\[8pt]
+        \large Michael Betancourt \\ {\small University of Warwick}
+}
+\date{\vspace*{8pt}\normalsize \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract} 
+  \noindent
+  The \code{stan::agrad} C++, reverse-mode automatic differentiation
+  library was designed to be usable, extensive and extensibile,
+  efficient, scalable, stable, portable, and redistributable.
+
+  Usability is achieved through a simple direct interface and a
+  cleanly abstracted functional interface.  The extensive built-in
+  library includes functions for matrix operations, linear algebra,
+  differential equation solving, and most common probability
+  functions.  Extensibility derives from a straightforward
+  object-oriented framework for expressions, allowing developers and
+  users to easily create custom functions. Efficiency is achieved
+  through a combination of custom memory management, subexpression
+  caching, traits-based metaprogramming, and expression templates.
+  Partial derivatives for compound functions are evaluated lazily for
+  improved scalability.  Stability is achieved by taking care with
+  arithmetic precision in algebraic expressions and providing stable,
+  compound functions where possible. For portability, the library is
+  standards-compliant C++ (03) and has been tested for all major
+  compilers for Windows, Mac OS X, and Linux.  It is distributed under
+  the new BSD license.
+
+  This paper provides an overview of \code{agrad}'s application
+  programmer interface (API), examples of its use, and a thorough
+  explanation of how it is implemented.  It also demonstrates the
+  efficiency and scalability of \code{agrad} by comparing its speed
+  and memory usage of gradient calculations to that of several popular
+  open-source C++ automatic differentiation systems (Adept, CppAD, and
+  Sacado), with results varying dramatically according to the type of
+  expression being differentiated.
+\end{abstract}
+
+\clearpage
+
+\section{Reverse-Mode Automatic Differentiation}
+
+Reverse-mode automatic differentiation operates on an arbitrary
+differentiable mathematical function expressed as a computer program
+and a specified set of inputs to calculate the derivatives of the
+function output with respect to the inputs.  The inputs are
+independent variables, the output a dependent variable, and the vector
+of derivatives is the gradient evaluated at the independent variables.
+
+For example, automatic differentiation will take a simple C++
+expression expression such as \code{x~*~y~/~2} and inputs such as
+$\code{x}=6$ and $\code{y}=4$ and produce the output value 12 and pair
+of derivatives $(2,3)$ of the result with respect to \code{x} and
+\code{y}.  
+
+Reverse-mode automatic differentiation constructs an expression graph
+and propagating the chain rule.  In somewhat more detail, it works by
+%
+\begin{enumerate}
+\item converting the formula to a rooted, directed, acyclic expression graph,
+  where parent nodes represent function values and child nodes
+  represent operands to the function,
+\item labeling each node with its value and each edge with 
+  the partial derivative of the parent node with respect to the child
+  node, 
+\item setting the root node's adjoint  to 1 and all other nodes' adjoints
+  to 0, 
+\item traversing the expression graph top down, visiting each node
+  before any of its child nodes, and for each node and each of its
+  child nodes, incrementing the child node's adjoint by the product of
+  the parent node's adjoint and the partial derivative of the parent
+  with respect to the child,
+\item noticing that the adjoints hold the derivative of the root node
+  with respect to each node, and
+\item reading the gradient from the input nodes' adjoints.
+\end{enumerate}
+%
+
+\subsection{Mechanics of Reverse Mode}
+
+As an example, consider the log density of a variable $y$ with a
+normal distribution of mean $\mu$ and standard deviation $\sigma$ is
+%
+\renewcommand{\theequation}{\arabic{equation}}
+\begin{equation}\label{normal-log-density.equation}
+\log \left( \distro{Normal}(y|\mu,\sigma) \right)
+= -\frac{1}{2} \left( \frac{y - \mu}{\sigma} \right)^2
+- \log \sigma
+- \frac{1}{2} \log (2 \pi).
+\end{equation}
+%
+This mathematical formula corresponds to the expression graph in
+\reffigure{expression-graph}.
+%
+\newcommand{\gmnode}[3]{\put(#1,#2){\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
+\newcommand{\gmnodeobs}[3]{\put(#1,#2){\color{lightgray}\circle*{20}}\put(#1,#2){\color{black}\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
+\newcommand{\gmdata}[3]{\put(#1,#2){\makebox(16,16){\footnotesize $#3$}}}
+\begin{figure}
+\begin{center}
+\begin{picture}(200,200)
+\gmnode{130}{200}{-}
+\put(142,200){\mbox{\footnotesize $v_{10}$}}
+\gmnode{100}{170}{-}
+\put(112,170){\mbox{\footnotesize $v_{9}$}}
+\gmdata{150}{160}{\mbox{\footnotesize $0.5\log 2 \pi$}}
+\gmnode{70}{140}{*}
+\put(82,140){\mbox{\footnotesize $v_{7}$}}
+\gmdata{30}{100}{-.5}
+\gmnode{100}{110}{\mbox{\footnotesize pow}}
+\put(112,110){\mbox{\footnotesize $v_{6}$}}
+\gmdata{120}{70}{\mbox{\footnotesize $2$}}
+\gmnode{190}{80}{\mbox{\footnotesize $\log$}}
+\put(202,80){\mbox{\footnotesize $v_{8}$}}
+\gmnode{70}{80}{/}
+\put(82,80){\mbox{\footnotesize $v_{5}$}}
+\gmnode{40}{50}{-}
+\put(52,50){\mbox{\footnotesize $v_{4}$}}
+\gmnodeobs{10}{20}{\mbox{\footnotesize $y$}}
+\put(22,20){\mbox{\footnotesize $v_{1}$}}
+\gmnodeobs{70}{20}{\mbox{\footnotesize $\mu$}}
+\put(82,20){\mbox{\footnotesize $v_{2}$}}
+\gmnodeobs{130}{20}{\mbox{\footnotesize $\sigma$}}
+\put(142,20){\mbox{\footnotesize $v_{3}$}}
+%
+\put(123,193){\vector(-1,-1){16}}
+\put(137,193){\vector(1,-1){16}}
+\put(93,163){\vector(-1,-1){16}}
+\put(107,163){\vector(1,-1){76}}
+\put(63,133){\vector(-1,-1){16}}
+\put(77,133){\vector(1,-1){16}}
+\put(93,103){\vector(-1,-1){16}}
+\put(107,103){\vector(1,-1){16}}
+\put(63,73){\vector(-1,-1){16}}
+\put(77,73){\vector(1,-1){46}}
+\put(183,73){\vector(-1,-1){46}}
+\put(33,43){\vector(-1,-1){16}}
+\put(47,43){\vector(1,-1){16}}
+\end{picture}
+\end{center}
+\vspace*{-6pt}
+\caption{\small\it Expression graph for the normal log density function.}\label{expression-graph.figure}
+\end{figure}
+
+
+\begin{figure}
+{\bf Forward Pass: Construct Expression Graph Stack}
+\begin{center}
+\begin{tabular}{c||c|cc}
+{\it var} & {\it value} & \multicolumn{2}{|c}{\it partials}
+\\ \hline \hline
+$v_1$ & $y$ 
+\\[2pt]
+$v_2$ & $\mu$
+\\[2pt]
+$v_3$ & $\sigma$
+\\[2pt]
+$v_4$ & $v_1 - v_2$ & $\partial v_4 \partial v_1 = 1$ 
+                   & $\partial v_4 / \partial v_2 = -1$
+\\[4pt]
+$v_5$ & $v_4 / v_3$ & $\partial v_5 / \partial v_4 = 1/v_3$
+                    & $\partial v_5 / \partial v_3 = -v_4 v_3^{-2}$
+\\[4pt]
+$v_6$ & $\left(v_5\right)^2$
+      & \multicolumn{2}{c}{$\partial v_6 / \partial v_5 = 2 v_5$}
+\\[4pt]
+$v_7$ & $(-0.5) v_6$ & \multicolumn{2}{c}{$\partial v_7 / \partial v_6
+                                          = -0.5$}
+\\[4pt]
+$v_8$ & $\log v_3$ & \multicolumn{2}{c}{$\partial v_8 / \partial v_3 = 1/v_3$}
+\\[4pt]
+$v_9$ & $v_7 - v_8$ & $\partial v_9 / \partial v_7 = 1$
+                    & $\partial v_9 / \partial v_8 = -1$
+\\[4pt]
+$v_{10}$ & $v_9 - (0.5 \log 2\pi)$ 
+         & \multicolumn{2}{c}{$\partial v_{10} / \partial v_9 = 1$}
+\end{tabular}
+\end{center}
+%
+\vspace*{6pt}
+{\bf Reverse Pass: Propagate Derivatives}
+\vspace*{-6pt}
+\begin{eqnarray*}
+a_{10} & = & 1
+\\
+a_{9} & {+}{=} & a_{10} \times (1)
+\\
+a_{7} & {+}{=} & a_9 \times (1)
+\\
+a_{8} & {+}{=} & a_9 \times (-1)
+\\
+a_{3} & {+}{=} & a_8 \times (1 / v_3)
+\\
+a_{6} & {+}{=} & a_7 \times (-0.5)
+\\
+a_{5} & {+}{=} & a_6 \times (2 v_5)
+\\
+a_{4} & {+}{=} & a_5 \times (1 / v_3)
+\\
+a_{3} & {+}{=} & a_5 \times (-v_4 v_3^{-2})
+\\
+a_{1} & {+}{=} & a_4 \times (1)
+\\
+a_{2} & {+}{=} & a_4 \times (-1)
+\end{eqnarray*}
+\vspace*{-24pt}
+\caption{\small\it Example of gradient calculation for the the log
+  density function of a normally distributed variable, as defined in
+  \refeq{normal-log-density}.  In the forward pass, as the stack is
+  constructed from the first input $v_1$ up to the final output
+  $v_{10}$, the values of the variables and partials are computed
+  numerically according to the formulas given in the value and
+  partials columns of the table.  In the reverse pass, the stack is
+  traversed from the final output down to the inputs, and as each
+  variable is visited, each of its operands is updated with the
+  variable's adjoint times the partial with respect to the operand.
+  After the reverse pass finishes, $(a_1,a_2,a_3)$ is the gradient of
+  the density function evaluated at $(y,\mu,\sigma)$.}
+  \label{autodiff-stack.figure}
+\end{figure}
+
+
+
+
+\subsection{Comparison to Alternative Methods of Computing Gradients}
+
+\subsubsection{Finite Differencing}
+
+Finite differences is a method to approximate derivatives numerically
+rather than symbolically.  Given a positive difference $\epsilon > 0$,
+an approximate derivative can be calculated as
+\[
+\frac{\partial}{\partial x_n} f(x) 
+\approx 
+\frac{f(x_1,\ldots,x_n + \epsilon, \ldots, x_N) - f(x_1, \ldots, x_N)}
+     {\epsilon}
+\]
+or a bit more accurately with a centered interval as
+\[
+\frac{\partial}{\partial x_n} f(x) 
+\approx 
+\frac{f(x_1,\ldots,x_n + \epsilon/2, \ldots, x_N) 
+      - f(x_1,\ldots,x_n - \epsilon/2, \ldots, x_N)}
+     {\epsilon}.
+\]
+%
+Although straightforward and general, calculating gradients using
+finite differences is slow and imprecise.  Finite differencing is slow
+because it requires $N + 1$ function evaluations ($2N + 1$ in the
+centered case) to compute the gradient of an $N$-ary function.  The
+numerical issues with finite differencing arise because a small
+$\epsilon$ is required for a good approximation of the derivative, but
+a large $\epsilon$ is required for floating-point precision.  Small
+$\epsilon$ values are problematic for accuracy because because
+subtraction of differently scaled numbers loses a degree of precision
+equal to their difference in scales; for example, subtracting a number
+on the scale of $10^{-6}$ from a number on the scale of 1 loses 6
+orders of precision in the $10^{-6}$-scaled term \citep{higham:2002}.
+Thus in practice, the arithmetic precision of finite differencing is
+usually at best $10^{-7}$ rather than the maximum of roughly
+$10^{-14}$ possible with double-precision floating point calculations.
+
+\subsubsection{Symbolic Differentiation}
+
+Unlike symbolic computer algebra systems, such as Mathematica
+\citep{mathematica:2014} or SymPy \citep{sympy:2014}, automatic
+differentiation does not explicitly generate a mathematical expression
+corresponding to the derivative calculation.  Rather, it calculates
+the gradient analytically by applying the chain rule directly to the
+original function's subexpressions.
+
+
+
+
+
+\section{Calculating Derivatives with \code{stan::agrad}}
+
+The C++ program in \reffigure{normal-log-gradient-cpp} calculates
+derivatives of the function give in \refeq{normal-log-density} with
+respect to $\mu$ and $\sigma$ for a constant $y$.
+%
+\begin{figure}
+\begin{quote}
+\small
+\begin{Verbatim}
+#include <cmath>
+#include <boost/math/constants.hpp>
+#include <stan/agrad/rev.hpp>
+
+int main() { 
+  double y = 1.3;
+  stan::agrad::var mu = 0.5, sigma = 1.2;
+
+  stan::agrad::var lp = 0;
+  lp -= pow(2 * boost::math::constants::pi<double>(), -0.5);
+  lp -= log(sigma);
+  lp -= 0.5 * pow((y - mu) / sigma), 2);
+  std::cout << "f(mu,sigma)= " << lp.val() << std::endl;
+
+  lp.grad();
+  std::cout << " d.f / d.mu = " << mu.adj()
+            << " d.f / d.sigma = " << sigma.adj() << std::endl;
+}
+\end{Verbatim}
+\end{quote}
+\vspace*{-6pt}
+\caption{\small\it Complete C++ program using \code{stan::agrad} to
+  compute the derivatives of the log normal density with respect to
+  its mean and standard deviation parameters.  The first block assigns
+  the constant and independent variables, the second block computes
+  the dependent variable and prints the value, and the final block
+  computes and prints the
+  gradients.}\label{normal-log-gradient-cpp.figure}
+\end{figure}
+%
+Constants like \code{y} are assigned to type \code{double} variables
+and independent variables like \code{mu} and \code{sigma} are assigned
+to type \code{var}.  The result \code{lp} is assigned type \code{var}
+and calculated using ordinary C++ operations involving operators
+(e.g., \code{*}, \code{/}), compound assignments (e.g., \code{-=}),
+and library functions (e.g., \code{pow}, \code{log}, \code{pi}).  The
+value is available through the member function \code{val()} as soon as
+operations have been applied.  The call to the member function
+\code{grad()} propagates derivatives from the dependent variable
+\code{lp} down through the expression graph to the independent
+variables.  The derivatives of the dependent variable with respect to
+the independent variables may then be extracted from the independent
+variables with the member function \code{adj()}.
+
+The gradients may be calculated and extracted automatically using the
+two-argument \code{grad} function, as shown in
+\reffigure{normal-log-gradient-cpp-2}.
+%
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+#include <vector>
+...
+  std::vector<stan::agrad::var> theta;
+  theta.push_back(mu);   theta.push_back(sigma);
+  std::vector<double> g;
+  lp.grad(theta,g);
+  std::cout << " d.f / d.mu = " << g[0]
+            << " d.f / d.sigma = " << g[1] << std::endl;
+\end{Verbatim}
+\end{quote}
+\caption{\small\it Alternative method to extract gradient as a
+  standard vector.  The ellision (\code{...}) represents all of the
+  code from \reffigure{normal-log-gradient-cpp} up to but not
+  including the final block; the replacement code populates a standard
+  vector with the gradient.}\label{normal-log-gradient-cpp-2.figure}
+\end{figure}
+%
+The standard vector \code{theta} holds the dependent variables and the
+standard vector \code{g} is used to hold the result.  The two-argument
+\code{grad} function is called on the dependent variable to propagate
+the derivatives and fill \code{g} with the gradient.
+
+\subsection{Differentiable Functions}
+
+The previous example was implemented directly in the main function
+block using primitive operations.  The \code{stan::agrad} library
+implements all of the built-in C++ operators, (compound) assignment
+operators, and library functions in a way to be described later.  From
+a user perspective, a function can be automatically differentiated
+with respect to some input parameters if the arguments to be
+differentiated can all be instantiated to \code{agrad::var} types.
+For the most flexiblity, functions should be separately templated in
+all of their arguments so as to support any combination of primitive
+(e.g., \code{double}, \code{int}) and autodiff (\code{agrad::var})
+instantiations.  For example, normal log density function can be
+defined as shown in \reffigure{normal-log-density-function}.
+%
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+#include <boost/math/tools/promotion.hpp>
+
+template <typename T1, typename T2, typename T3>
+inline
+typename boost::math::tools::promote_args<T1,T2,T3>::type
+normal_log(const T1& y1, const T2& y2, const T3& y3) {
+  using std::pow;  using std::log;  
+  return -0.5 * pow((y - mu) / sigma, 2)
+      - log(sigma)
+      - 1 / sqrt(2 * pi<double>());
+}
+...
+double y = 1.3;
+stan::agrad::var mu = 0.5, sigma = 1.2;
+
+stan::agrad::var lp = normal_log(y,mu,sigma);
+...
+\end{Verbatim}
+\end{quote}
+\vspace*{-12pt}
+\caption{\small\it Templated C++ function to compute the log normal
+  density.  This fully templated definition allows the template
+  parameters \code{T1}, \code{T2}, or \code{T3} to be instantiated as
+  independent variables\, \mbox{\rm (\code{agrad::var})} or
+  constants\, \mbox{\rm (\code{double}, \code{int})}.  Boost's
+  promotion mechanism is used to calculate the return type. This
+  function can be dropped into the previous example, replacing the
+  definition of \code{lp} with the one given
+  here.}\label{normal-log-density-function.figure}
+\end{figure}
+%
+As written, the function in \reffigure{normal-log-density-function}
+can be applied to any of the eight combinations of \code{double} and
+\code{var} arguments.  
+
+Boost's traits-based metaprogram \code{promote\_args}
+\citep{Boost:2011} is designed to calculate return types in just such
+applications.  In general, the return type should be \code{double} if
+all the input arguments are primitive integers or double-precision
+floating point values, and \code{agrad::var} if any of the arguments
+is of type \code{agrad::var}.  Given a sequence of types $\code{T1},
+\ldots, \code{TN}$, the structure
+\code{boost::math::tools::promote\_args<T1,...,TN> } defines a typedef
+named \code{type} which is defined to be the result of promoting the
+input types to a common type to which they can all be assigned.  The
+promotion of $\code{T1}, \ldots, \code{TN}$, defined so that the
+result is \code{double} if all the inputs are \code{int} or
+\code{double}, and \code{agrad::var} if any of the input types is
+\code{agrad::var}.  The label \code{typename} before the typedef is
+required to let the C++ parser know that \code{::type} is a typedef
+rather than a regular value.  The Boost promotion mechanism is used
+throughout the \code{stan::agrad} library to define both return types
+and intermediate types.  For instance, \code{y~-~mu} could be assigned
+to an intermediate variable of type \code{promote\_args<T1,T2>::type}.
+
+In order to allow function such as \code{log} and \code{pow} to be
+instantiated with arguments of type \code{agrad::var} and primitive
+C++ types, the primitive version of the function is brought in with a
+\code{using} statement, as in \code{using~std::pow;}.  This brings the
+namespace for primitives into scope and allows \code{pow} to be
+applied to primitive \code{double} and \code{int} types.  The
+appropriate function for autodiff variables \code{stan::agrad} is
+brought in through argument-dependent lookup (ADL)
+\cite[Section~3.4]{cpp-standard:2003}, which brings the namespace of
+any argument variables into scope for the purposes of resolving
+function applications.
+
+
+\subsection{Functors and Functionals}
+
+The \code{stan::agrad} library provides a fully abstracted approach to
+automatic differentiation that uses a C++ functor to represent a
+function to be differentiated and a functional for the gradient
+operator.  A full example is shown in \reffigure{normal-functor}.
+%
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+using Eigen::Matrix;  using Eigen::Dynamic;
+
+struct normal_log_likelihood {
+  const Matrix<double,Dynamic,1> y_;
+
+  mean_sd(const std::vector<double>& y) : y_(y) { }
+
+  template <typename T>
+  T operator()(const Matrix<T,Dynamic,1>& theta) {
+    T mu = theta[0];   T sigma = theta[1];
+    T lp = 0;
+    for (size_t n = 0; n < y_.size(); ++n)
+      lp += normal_log(y_[n],mu,sigma);
+    return lp;
+  }
+};
+
+Matrix<double,Dynamic,1> y(3);
+y << 1.3, 2.7, -1.9;
+normal_log_likelihood f(y);
+
+Matrix<double,Dynamic,1> theta(2);
+theta << 1.3, 2.9;
+
+Matrix<double,Dynamic,1> grad_fx;
+double fx;
+stan::agrad::gradient(f, x, fx, grad_fx);
+\end{Verbatim}
+\end{quote}
+\caption{\small\it Definition of the normal log likelihood function as
+  a functor to allow gradient calculations with respect to mean and
+  standard deviation using \code{stan::agrad}.  The argument type is
+  the Eigen type for vectors with elements of type \code{T} and the
+  result is also defined to be of type \code{T}.  The likelihood
+  function is instantiated as \code{f} with a vector of data.  The
+  argument \code{theta} is instantiated with the parameter values.
+  Then a scalar \code{fx} is defined to hold the function value and an
+  Eigen vector \code{grad\_fx} is defined to hold the gradient.  The
+  function \code{gradient} is then called to calculate the value and
+  the gradient from the function \code{f} and input
+  \code{x}.}\label{normal-functor.figure}
+\end{figure}
+%
+
+A functor in C++ is a function that defines \code{operator()} and can
+hence behaves syntactically like a function.  For example, in the code
+in \reffigure{normal-functor}, the expression \code{f(x)} denotes the
+value of \code{f} applied to \code{x}.  A functional in C++ is a
+function that applies to a functor.  For functional autodiff in
+\code{stan::agrad}, the functor must define \code{operator()} member
+which can be applied to an Eigen vector containing elements of type
+\code{agrad::var}.  In \reffigure{normal-functor}, the elements of the
+vector argument are declared to have the type of the template
+parameter \code{T}, which can be instantiated to \code{agrad::var} for
+differentiation and to \code{double} for testing.
+
+Jacobians can be calculated in the same way, but require an
+\code{operator()} definition accepting an Eigen vector of arguments
+and producing an Eigen vector of results, both with scalar types
+\code{agrad::var}.
+
+\clearpage
+\appendix
+
+\section{Derivatives}
+
+\subsection{Gradients}
+
+Suppose $f : \reals^N \rightarrow \reals$ is a continuously
+differentiatble $N$-ary function.  The gradient operator
+$\nabla:(\reals^N \rightarrow \reals)\rightarrow (\reals^N \rightarrow
+\reals^N)$ is defined so that $(\nabla f):\reals^N \rightarrow
+\reals^N$ is a function mapping a point $x \in \reals^N$ to the
+derivative vector of $f$ evaluated at $x$, namely
+%
+\[
+(\nabla f)(x) 
+= 
+\left\langle 
+  \left. \frac{\partial}{\partial u_1} f(u_1,x_2,\ldots,x_N)
+  \right|_{u_1 = x_1},
+  \ldots,
+  \left. \frac{\partial}{\partial u_N}
+    f(x_1,\ldots,x_{N-1},u_N)\right|_{u_N = x_N}
+\right\rangle.
+\]
+%
+Here new variables $u_n$ are introduced as bound variables to
+avoid any confusion arising from using $x_n$ both as a component of
+the evaluation point $x$ and as a bound variable for differentiation.
+
+\section{Jacobians}
+
+The Jacobian of a function $g : \reals^N \rightarrow \reals^M$ is just
+the matrix formed by stacking the gradients of $g$ projected down to
+each of the $M$ result dimensions,
+%
+\[
+J(g)(x) = 
+\left[
+\begin{array}{c}
+(\nabla g_1)(x)
+\\[2pt]
+\vdots
+\\[2pt]
+(\nabla g_M)(x)
+\end{array}
+\right]
+\]
+%
+where $g_m(x) = g(x)_m$, the $m$-th component of the result, by definition.
+
+\clearpage
+\nocite{Hogan:2014}
+\nocite{Neal:2003}
+
+\bibliographystyle{apalike}
+\bibliography{../../bibtex/all}
+
+
+\end{document}
