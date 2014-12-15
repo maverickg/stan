@@ -28,7 +28,6 @@
 \titleformat{\subsubsection}{\slshape}{}{0em}{}
 
 
-
 \newcommand{\code}[1]{{\tt #1}}
 \newcommand{\mycaption}[2]{\caption{{\it #2}\label{#1.figure}}}
 
@@ -42,6 +41,7 @@
 \newcommand{\refappendix}[1]{Appendix~\ref{#1.appendix}}
 \newcommand{\refsection}[1]{Section~\ref{#1.section}}
 \newcommand{\reffigure}[1]{Figure~\ref{#1.figure}}
+\newcommand{\refeq}[1]{(\ref{#1.equation})}
 \newcommand{\refnote}[1]{Footnote~\ref{#1.footnote}}
 
 % iPad: 3w x 4h, 
@@ -61,4 +61,6 @@
 \raggedbottom
 
 \sloppy % no line overruns
+
+% remove section number from equations
 

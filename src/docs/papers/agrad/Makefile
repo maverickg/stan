@@ -1,9 +1,8 @@
-stan-autodiff.pdf: stan-autodiff.tex
-	pdflatex stan-autodiff.tex
-	bibtex stan-autodiff
-	pdflatex stan-autodiff.tex
-	pdflatex stan-autodiff.tex 
+.PHONY: agrad-rev.pdf
 
-clean:
-	rm -f stan-autodiff.aux stan-autodiff.bbl stan-autodiff.blg stan-autodiff.brf stan-autodiff.log stan-autodiff.out stan-autodiff.pdf
+agrad-rev.pdf: agrad-rev.tex stan-papers.sty
+	latexmk -pdf -pdflatex="pdflatex -interaction=nonstopmode -file-line-error"
+
+clean-all:
+	rm -f *.aux *.bbl *.blg *.brf *.log *.fls *.fdb_latexmk *.out agrad-rev.pdf
 
