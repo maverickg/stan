@@ -17,7 +17,9 @@
 \date{\vspace*{8pt}\normalsize \today}
 
 \begin{document}
+
 \maketitle
+\thispagestyle{empty}
 
 \begin{abstract} 
   \noindent
@@ -92,60 +94,72 @@ and propagating the chain rule.  In somewhat more detail, it works by
 \end{enumerate}
 %
 
-\subsection{Mechanics of Reverse Mode}
+\subsection{Mechanics of Reverse Mode Automatic Differentiation}
 
-As an example, consider the log density of a variable $y$ with a
-normal distribution of mean $\mu$ and standard deviation $\sigma$ is
+As an example, consider the normal log probability density function
+for a variable $y$ with a normal distribution with mean $\mu$ and
+standard deviation $\sigma$,
 %
 \renewcommand{\theequation}{\arabic{equation}}
 \begin{equation}\label{normal-log-density.equation}
 \log \left( \distro{Normal}(y|\mu,\sigma) \right)
 = -\frac{1}{2} \left( \frac{y - \mu}{\sigma} \right)^2
 - \log \sigma
-- \frac{1}{2} \log (2 \pi).
+- \frac{1}{2} \log (2 \pi)
 \end{equation}
 %
-This mathematical formula corresponds to the expression graph in
-\reffigure{expression-graph}.
+and its gradient evaluated a point
 %
+\begin{equation}\label{gradient-normal-log-density.equation}
+  \nabla_{\! [y \, \mu \, \sigma]} \log \distro{Normal}(y|\mu,\sigma) 
+  = 
+  \left[
+    -(y - \mu) \sigma^{-2} \ \ \ \
+    (y - \mu) \sigma^{-2} \ \ \ \ 
+    (y - \mu)^2 \sigma^{-3} - \sigma^{-1}
+  \right]
+\end{equation}
+
+
 \newcommand{\gmnode}[3]{\put(#1,#2){\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
-\newcommand{\gmnodeobs}[3]{\put(#1,#2){\color{lightgray}\circle*{20}}\put(#1,#2){\color{black}\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
+\newcommand{\gmnodeobs}[3]{\put(#1,#2){\color{yellow}\circle*{20}}\put(#1,#2){\color{black}\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
+\newcommand{\gmnoderoot}[3]{\put(#1,#2){\color{red}\circle*{20}}\put(#1,#2){\color{black}\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
 \newcommand{\gmdata}[3]{\put(#1,#2){\makebox(16,16){\footnotesize $#3$}}}
 \begin{figure}
 \begin{center}
 \begin{picture}(200,200)
-\gmnode{130}{200}{-}
-\put(142,200){\mbox{\footnotesize $v_{10}$}}
+\gmnoderoot{130}{200}{-}
+\put(142,200){\mbox{\color{blue}{\footnotesize $v_{10}$}}}
 \gmnode{100}{170}{-}
-\put(112,170){\mbox{\footnotesize $v_{9}$}}
-\gmdata{150}{160}{\mbox{\footnotesize $0.5\log 2 \pi$}}
+\put(112,170){\mbox{\color{blue}{\footnotesize $v_{9}$}}}
+\gmdata{150}{160}{\mbox{\color{gray}{$0.5\log 2 \pi$}}}
 \gmnode{70}{140}{*}
-\put(82,140){\mbox{\footnotesize $v_{7}$}}
-\gmdata{30}{100}{-.5}
+\put(82,140){\mbox{\color{blue}{\footnotesize $v_{7}$}}}
+\gmdata{30}{100}{\mbox{\color{gray}{$-.5$}}}
 \gmnode{100}{110}{\mbox{\footnotesize pow}}
-\put(112,110){\mbox{\footnotesize $v_{6}$}}
-\gmdata{120}{70}{\mbox{\footnotesize $2$}}
+\put(112,110){\mbox{\color{blue}{\footnotesize $v_{6}$}}}
+\gmdata{120}{70}{\mbox{\color{gray}{$2$}}}
 \gmnode{190}{80}{\mbox{\footnotesize $\log$}}
-\put(202,80){\mbox{\footnotesize $v_{8}$}}
+\put(202,80){\mbox{\color{blue}{\footnotesize $v_{8}$}}}
 \gmnode{70}{80}{/}
-\put(82,80){\mbox{\footnotesize $v_{5}$}}
+\put(82,80){\mbox{\color{blue}{\footnotesize $v_{5}$}}}
 \gmnode{40}{50}{-}
-\put(52,50){\mbox{\footnotesize $v_{4}$}}
+\put(52,50){\mbox{\color{blue}{\footnotesize $v_{4}$}}}
 \gmnodeobs{10}{20}{\mbox{\footnotesize $y$}}
-\put(22,20){\mbox{\footnotesize $v_{1}$}}
+\put(22,20){\mbox{\color{blue}{\footnotesize $v_{1}$}}}
 \gmnodeobs{70}{20}{\mbox{\footnotesize $\mu$}}
-\put(82,20){\mbox{\footnotesize $v_{2}$}}
+\put(82,20){\mbox{\color{blue}{\footnotesize $v_{2}$}}}
 \gmnodeobs{130}{20}{\mbox{\footnotesize $\sigma$}}
-\put(142,20){\mbox{\footnotesize $v_{3}$}}
+\put(142,20){\mbox{\color{blue}{\footnotesize $v_{3}$}}}
 %
 \put(123,193){\vector(-1,-1){16}}
-\put(137,193){\vector(1,-1){16}}
+\put(137,193){\color{gray}{\vector(1,-1){16}}}
 \put(93,163){\vector(-1,-1){16}}
 \put(107,163){\vector(1,-1){76}}
-\put(63,133){\vector(-1,-1){16}}
+\put(63,133){\color{gray}{\vector(-1,-1){16}}}
 \put(77,133){\vector(1,-1){16}}
-\put(93,103){\vector(-1,-1){16}}
-\put(107,103){\vector(1,-1){16}}
+\put(93,103){{\vector(-1,-1){16}}}
+\put(107,103){\color{gray}{\vector(1,-1){16}}}
 \put(63,73){\vector(-1,-1){16}}
 \put(77,73){\vector(1,-1){46}}
 \put(183,73){\vector(-1,-1){46}}
@@ -153,13 +167,25 @@ This mathematical formula corresponds to the expression graph in
 \put(47,43){\vector(1,-1){16}}
 \end{picture}
 \end{center}
-\vspace*{-6pt}
-\caption{\small\it Expression graph for the normal log density function.}\label{expression-graph.figure}
+\vspace*{-12pt}
+\caption{\small\it Expression graph for the normal log density
+  function given in \refeq{normal-log-density}.  Each circle
+  corresponds to an automatic differentiation variable, with the
+  variable name given to the right in blue.  The independent variables
+  are highlighted in yellow on the bottom row, with the final node
+  highlighted in red on the top of the graph.  The function producing
+  each node is displayed inside the circle, with operands denoted by
+  arrows.  Constants are shown in gray with gray arrows leading to
+  them because derivatives need not be propagated to constant
+  operands.}\label{expression-graph.figure}
 \end{figure}
-
-
+%
+This mathematical formula corresponds to the expression graph in
+\reffigure{expression-graph}.  Each subexpression corresponds to a
+node in the graph, and each edge connects the node representing a
+function evaluation to its operands.  
+%
 \begin{figure}
-{\bf Forward Pass: Construct Expression Graph Stack}
 \begin{center}
 \begin{tabular}{c||c|cc}
 {\it var} & {\it value} & \multicolumn{2}{|c}{\it partials}
@@ -191,51 +217,89 @@ $v_{10}$ & $v_9 - (0.5 \log 2\pi)$
          & \multicolumn{2}{c}{$\partial v_{10} / \partial v_9 = 1$}
 \end{tabular}
 \end{center}
-%
-\vspace*{6pt}
-{\bf Reverse Pass: Propagate Derivatives}
-\vspace*{-6pt}
-\begin{eqnarray*}
-a_{10} & = & 1
-\\
-a_{9} & {+}{=} & a_{10} \times (1)
-\\
-a_{7} & {+}{=} & a_9 \times (1)
-\\
-a_{8} & {+}{=} & a_9 \times (-1)
-\\
-a_{3} & {+}{=} & a_8 \times (1 / v_3)
-\\
-a_{6} & {+}{=} & a_7 \times (-0.5)
-\\
-a_{5} & {+}{=} & a_6 \times (2 v_5)
-\\
-a_{4} & {+}{=} & a_5 \times (1 / v_3)
-\\
-a_{3} & {+}{=} & a_5 \times (-v_4 v_3^{-2})
-\\
-a_{1} & {+}{=} & a_4 \times (1)
-\\
-a_{2} & {+}{=} & a_4 \times (-1)
-\end{eqnarray*}
-\vspace*{-24pt}
 \caption{\small\it Example of gradient calculation for the the log
   density function of a normally distributed variable, as defined in
   \refeq{normal-log-density}.  In the forward pass, as the stack is
   constructed from the first input $v_1$ up to the final output
   $v_{10}$, the values of the variables and partials are computed
   numerically according to the formulas given in the value and
-  partials columns of the table.  In the reverse pass, the stack is
+  partials columns of the table.}\label{forward-pass.figure}
+\end{figure}
+
+\reffigure{forward-pass} illustrates the forward pass used by
+reverse-mode automatic differentiation to construct the expression
+graph for a program.  The expression graph is constructed in the
+ordinary evaluation order, with each subexpression being numbered and
+placed on a stack.  The stack is initialized here with the dependent
+variables, but this is not required.  Each operand to an expression is
+evaluated before the expression node is created and placed on the
+stack.  As a result, the stack provides a topological sort of the
+nodes in the graph (i.e., a sort in which each node representing an
+expression occurs above its subexpression nodes in the stack---see
+\citep[Section~2.2.3]{knuth:97}).  \reffigure{forward-pass} lists in
+the right column for each node, the partial derivative of the function
+represented by the node with respect to its operands.  In
+\code{stan::agrad}, most of these partials are evaluated lazily during
+the reverse pass based on function's value and its operands' values.
+
+
+\begin{figure}
+\[
+\begin{array}{rcl|l}
+{\it var} & {\it operation} & {\it value} & {\it result}
+\\ \hline \hline
+a_{1:9} & = & 0 & a_{1:9} = 0
+\\
+a_{10} & = & 1 & a_{10} = 1
+\\ \hline
+a_{9} & {+}{=} & a_{10} \times (1) & a_9 = 1
+\\
+a_{7} & {+}{=} & a_9 \times (1) & a_7 = 1
+\\
+a_{8} & {+}{=} & a_9 \times (-1) & a_8 = -1
+\\
+a_{3} & {+}{=} & a_8 \times (1 / v_3) & a_3 = -1 / v_3
+\\
+a_{6} & {+}{=} & a_7 \times (-0.5) & a_6 = -0.5
+\\
+a_{5} & {+}{=} & a_6 \times (2 v_5) & a_5 = -v_5
+\\
+a_{4} & {+}{=} & a_5 \times (1 / v_3) & a_4 = -v_5 / v_3
+\\
+a_{3} & {+}{=} & a_5 \times (-v_4 v_3^{-2}) & a_3 = -1 / v_3 + v_5 v_4 v_3^{-2}
+\\
+a_{1} & {+}{=} & a_4 \times (1) & a_1 = -v_5 / v_3
+\\
+a_{2} & {+}{=} & a_4 \times (-1) & a_2 = v_5 / v_3
+\end{array}
+\]
+\vspace*{-12pt}
+\caption{\small\it In the reverse pass, the stack is
   traversed from the final output down to the inputs, and as each
   variable is visited, each of its operands is updated with the
   variable's adjoint times the partial with respect to the operand.
   After the reverse pass finishes, $(a_1,a_2,a_3)$ is the gradient of
-  the density function evaluated at $(y,\mu,\sigma)$.}
+  the density function evaluated at $(y,\mu,\sigma)$, which matches
+  the correct result given in \refeq{gradient-normal-log-density}
+  after substitution for $v_4$ and $v_5$.}
   \label{autodiff-stack.figure}
 \end{figure}
-
-
-
+%
+\reffigure{autodiff-stack} shows the processing for reverse mode,
+which involves an adjoint value for each node.  The adjoints for all
+nodes other than the root are initialized to 0; the root's adjoint is
+initialized to 1, becuase $\partial x / \partial x = 1$.  The backward
+sweep simply walks down the expression stack, and for each node,
+propagates derivatives from it down to its operands using the chain
+rule.  Because the nodes are in topological order, by the time a node
+is visted, its adjoint will represent the partial derivative of the
+root of the overall expression with respect to the expression
+represented by the node.  Each node then propagates its derivatives to
+its operands by incrementing its operands' adjoints by the product of
+the expression node's adjoint times the partial with respect to the
+operand.  Thus when the reverse pass is completed, the adjoints of the
+independent variables hold the gradient of the dependent variable
+(function value) with respect to the independent variables (inputs).
 
 \subsection{Comparison to Alternative Methods of Computing Gradients}
 
@@ -288,10 +352,20 @@ original function's subexpressions.
 
 
 
-\section{Calculating Derivatives with \code{stan::agrad}}
+\section{Calculating Gradients and Jacobians with \code{\bfseries
+    stan::agrad}}
+
+Reverse-mode automatic differentiation in \code{stan::agrad} can be
+used to evaluate gradients of functions from $\reals^N$ to $\reals$ or
+Jacobians of differentiable functions from $\reals^N$ to $\reals^M$,
+returning values for a specified input point $x \in \reals^N$; see
+\refsection{derivative-definitions} for precise definitions of
+gradients and Jacobians and their evaluation at a point.
+
+\subsection{Direct Calculation of Gradients of Programs}
 
 The C++ program in \reffigure{normal-log-gradient-cpp} calculates
-derivatives of the function give in \refeq{normal-log-density} with
+derivatives of the function given in \refeq{normal-log-density} with
 respect to $\mu$ and $\sigma$ for a constant $y$.
 %
 \begin{figure}
@@ -318,7 +392,7 @@ int main() {
 }
 \end{Verbatim}
 \end{quote}
-\vspace*{-6pt}
+\vspace*{-12pt}
 \caption{\small\it Complete C++ program using \code{stan::agrad} to
   compute the derivatives of the log normal density with respect to
   its mean and standard deviation parameters.  The first block assigns
@@ -347,6 +421,7 @@ two-argument \code{grad} function, as shown in
 \reffigure{normal-log-gradient-cpp-2}.
 %
 \begin{figure}
+\vspace*{-12pt}
 \begin{quote}\small
 \begin{Verbatim}
 #include <vector>
@@ -359,6 +434,7 @@ two-argument \code{grad} function, as shown in
             << " d.f / d.sigma = " << g[1] << std::endl;
 \end{Verbatim}
 \end{quote}
+\vspace*{-12pt}
 \caption{\small\it Alternative method to extract gradient as a
   standard vector.  The ellision (\code{...}) represents all of the
   code from \reffigure{normal-log-gradient-cpp} up to but not
@@ -371,7 +447,7 @@ standard vector \code{g} is used to hold the result.  The two-argument
 \code{grad} function is called on the dependent variable to propagate
 the derivatives and fill \code{g} with the gradient.
 
-\subsection{Differentiable Functions}
+\subsection{Coding Template Functions for Automatic Differentiation}
 
 The previous example was implemented directly in the main function
 block using primitive operations.  The \code{stan::agrad} library
@@ -434,15 +510,16 @@ is of type \code{agrad::var}.  Given a sequence of types $\code{T1},
 \code{boost::math::tools::promote\_args<T1,...,TN> } defines a typedef
 named \code{type} which is defined to be the result of promoting the
 input types to a common type to which they can all be assigned.  The
-promotion of $\code{T1}, \ldots, \code{TN}$, defined so that the
+promotion of $\code{T1}, \ldots, \code{TN}$ is defined so that the
 result is \code{double} if all the inputs are \code{int} or
 \code{double}, and \code{agrad::var} if any of the input types is
 \code{agrad::var}.  The label \code{typename} before the typedef is
-required to let the C++ parser know that \code{::type} is a typedef
-rather than a regular value.  The Boost promotion mechanism is used
-throughout the \code{stan::agrad} library to define both return types
-and intermediate types.  For instance, \code{y~-~mu} could be assigned
-to an intermediate variable of type \code{promote\_args<T1,T2>::type}.
+required to let the C++ parser know that the member variable is a
+typedef rather than a regular value.  The Boost promotion mechanism is
+used throughout the \code{stan::agrad} library to define both return
+types and types of variables for intermediate results.  For instance,
+\code{y~-~mu} would be assigned to an intermediate variable of type
+\code{promote\_args<T1,T2>::type}.
 
 In order to allow function such as \code{log} and \code{pow} to be
 instantiated with arguments of type \code{agrad::var} and primitive
@@ -451,13 +528,13 @@ C++ types, the primitive version of the function is brought in with a
 namespace for primitives into scope and allows \code{pow} to be
 applied to primitive \code{double} and \code{int} types.  The
 appropriate function for autodiff variables \code{stan::agrad} is
-brought in through argument-dependent lookup (ADL)
+brought in through argument-dependent lookup
 \cite[Section~3.4]{cpp-standard:2003}, which brings the namespace of
 any argument variables into scope for the purposes of resolving
 function applications.
 
 
-\subsection{Functors and Functionals}
+\subsection{Calculating the Derivatives of Functors with Functionals}
 
 The \code{stan::agrad} library provides a fully abstracted approach to
 automatic differentiation that uses a C++ functor to represent a
@@ -523,15 +600,235 @@ vector argument are declared to have the type of the template
 parameter \code{T}, which can be instantiated to \code{agrad::var} for
 differentiation and to \code{double} for testing.
 
-Jacobians can be calculated in the same way, but require an
-\code{operator()} definition accepting an Eigen vector of arguments
-and producing an Eigen vector of results, both with scalar types
-\code{agrad::var}.
+
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+using Eigen::Matrix;  using Eigen::Dynamic;
+Matrix<double,Dynamic,1> x = ...;   // inputs
+Matrix<var,Dynamic,1> x_var(x.size());
+for (int i = 0; i < x.size(); ++i) x_var(i) = x(i);
+Matrix<var,Dynamic,1> f_x_var = f(x_var);
+Matrix<double,Dynamic,1> f_x(f_x_var.size());
+for (int i = 0; i < f_x.size(); ++i) f_x(i) = f_x_var(i).val();
+Matrix<double,Dynamic,Dynamic> J;
+for (int i = 0; i < f_x_var.size(); ++i) {
+  stan::agrad::set_zero_all_adjoints();
+  fx_var(i).grad();
+  for (int j = 0; j < x_var.size(); ++j)
+    J(i,j) = x_var(j).adj();
+}
+\end{Verbatim}
+\end{quote}
+\vspace*{-12pt}
+\caption{\small\it Calculating the Jacobian of a multivariate function \code{f}.
+  First, the arguments are converted to autodiff variables.  Next, the
+  function is applied and the result is converted back to a vector of
+  doubles.  Next, a loop is executed for each of the output
+  dimensions, applying a reverse pass to a particular output using
+  \code{grad()} to produce a row of the output Jacobian
+  \code{J}.}\label{direct-jacobian.figure}
+\end{figure}
+%
+
+\subsection{Calculating Jacobians}
+
+Mathematically, Jacobians are simply repeated gradient calculations,
+one for each output of a multivariate function; see
+\refsection{derivative-definitions} for an exact definition.
+Computationally, they work the same way, requiring a single forward
+pass to construct all of the outputs, then one reverse pass for each
+output dimension.
+
+Suppose that \code{f} is a functor that acceptss an dimensional Eigen
+$N$-vector of autodiff variables as input (typically through
+templating) and produces an Eigen $M$-vector as output.
+\reffigure{direct-jacobian} shows how to calculate the Jacobian of the
+function evaluated at a given input \code{x}.
+
+Alternatively, the Jacobian functional can be applied directly to the
+function \code{f}, as shown in \reffigure{functional-jacobian}.
+%
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+using Eigen::Matrix;  using Eigen::Dynamic;
+Matrix<double,Dynamic,1> x = ...;  // inputs
+Matrix<double,Dynamic,Dynamic> J;
+matrix<double,Dynamic,1> f_x;
+stan::agrad::jacobian(f, x, f_x, J);
+\end{Verbatim}
+\end{quote}
+\vspace*{-12pt}
+\caption{\small\it Direct computation of the Jacobian of a multivariate functor
+  \code{f} evaluated at a vector \code{x} using a
+  functional.}\label{functional-jacobian.figure}
+\end{figure}
+
+
+\section{How \code{\bfseries stan::agrad} Works}
+
+As seen in the previous section, the workhorse data type of
+\code{stan::agrad} is the type \code{stan::agrad::var}.  As shown in
+\reffigure{var-definition}, \code{var} is implemented following the pointer
+to implementation (Pimpl) pattern \citep{sutter:98,sutter:01}.  The
+pointer is to an implementation, which is of type
+\code{stan::agrad::vari}.  This allows the use of the resource
+allocation is initialization (RAII) pattern \citep{stroustrup:94},
+which neatly encapsulates the use of pointers and memory management
+for the user-facing application programmer interface
+(API).
+
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+class var {
+private:
+  vari* vi_;
+public:
+  var() : vi_(static_cast<vari*>(0U)) { }
+  var(double v) : vi_(new vari(v)) { }
+
+  double val() const { return vi_->val_; }
+  double adj() const { return vi_->adj_; }  
+};
+\end{Verbatim}
+\end{quote}
+\vspace*{-12pt}
+\caption{\small\it The core of the \code{agrad::var} class definition,
+  which acts as a simple pointer to implementation wrapper; the class
+  additionally defines a copy constructor, constructors for the other
+  primitive types, and the full set of assignment and compound
+  assignment operators.  The destructor is implicit because there is
+  nothing to do to clean up instances; all of the work is done with
+  the memory management for \code{vari}. The class is defined in the
+  \code{stan::agrad} namespace, but the namespace declarations are not
+  shown to save space.}\label{var-definition.figure}
+\end{figure}
+
+The definition of the base variable implementation class, \code{vari},
+is shown in \reffigure{vari-definition}.  The base class holds the
+variable's value and adjoint.  The design is object-oriented, with the
+intention being that subclasses will extend \code{vari} and implement the
+virtual method \code{chain()} in a function-specific way to propagate
+derivatives with the chain rule.  The class \code{vari} itself extends
+the base class \code{chainable}, which holds object which participate
+in the chain rule but do not simply hold values and adjoints (e.g.,
+some matrix operations).
+
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+struct chainable {
+  chainable() { }
+  virtual ~chainable() { }
+
+  virtual void chain() { }
+  virtual void init_dependent() { }
+  virtual void set_zero_adjoint() { }
+
+  static inline void* operator new(size_t nbytes) {
+    return ChainableStack::memalloc_.alloc(nbytes);
+  }
+};
+\end{Verbatim}
+\end{quote}
+\vspace*{-12pt}
+\caption{\small\it The core of the \code{agrad::chainable} base class.
+  The virtual method \code{chain()} implements derivative propagation
+  for extensions of \code{chainable}.  There is a static
+  specialization of \code{operator}~\code{new}, which handles custom
+  arena-based memory management.  The initialization and set-zero
+  are virtual methods used to initialize the adjoints during the
+  derivative propagation (reverse) pass.}\label{chainable-definition.figure}
+\end{figure}
+
+
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+class vari : public chainable {
+public:
+  const double val_;
+  double adj_;
+
+  vari(double v) : val_(v), adj_(0) { 
+    ChainableStack::var_stack_.push_back(this);
+  }
+
+  virtual ~vari() { }
+
+  virtual void init_dependent() { adj_ = 1; }
+  virtual void set_zero_adjoint() { adj_ = 0; }
+};
+\end{Verbatim}
+\end{quote}
+\vspace*{-12pt}
+\caption{\small\it The core of the \code{agrad::vari} class, which
+  extends the base class \code{agrad::chainable} and holds the actual
+  value and adjoint for an autodiff variable instantiation.
+  namespace.  The adjoint manipulation methods are defined to set the
+  adjoint to 1 when initializing the dependent variable's adjoint and
+  0 for the set-to-zero operation. There is a further constructor that
+  manages memory slightly differently that will be discussed
+  later.}\label{vari-definition.figure}
+\end{figure}
+
+Instances of \code{vari} and its extensions are allocated using the
+specialized static \code{operator}~\code{new} definition.  The specialization
+references the \code{alloc(size\_t)} method of the variable
+\code{ChainableStack::memalloc\_}, which provides a custom arena-based
+memory management for variable implementations.
+
+\begin{figure}
+\begin{quote}\small
+\begin{Verbatim}
+template<typename T, typename AllocT>
+struct AutodiffStackStorage {
+  static std::vector<T*> var_stack_;
+  static std::vector<AllocT*> var_alloc_stack_;
+  static memory::stack_alloc memalloc_;
+};
+
+struct chainable_alloc {
+  chainable_alloc() {
+    ChainableStack::var_alloc_stack_.push_back(this);
+  }
+  virtual ~chainable_alloc() { };
+};
+
+typedef AutodiffStackStorage<chainable,chainable_alloc>
+  ChainableStack;
+\end{Verbatim}
+\end{quote}
+\vspace*{-12pt}
+\caption{\small\it The core of the \code{agrad::ChainableStack}
+  template class definition, which holds the memory arena for
+  reverse-mode autodiff.  The key components are \code{var\_stack\_},
+  which holds all of the usual autodiff variables and is traversed to
+  propagate derivatives, \code{var\_alloc\_stack}, which holds
+  objects allocated for autodiff that need to have their
+  \code{delete()} methods called, and \code{memalloc\_}, which is
+  the byte-level memory manager.}\label{chainable-stack-definition.figure}
+\end{figure}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 \clearpage
 \appendix
 
-\section{Derivatives}
+\section{Derivatives}\label{derivative-definitions.section}
 
 \subsection{Gradients}
 
@@ -545,13 +842,15 @@ derivative vector of $f$ evaluated at $x$, namely
 \[
 (\nabla f)(x) 
 = 
-\left\langle 
-  \left. \frac{\partial}{\partial u_1} f(u_1,x_2,\ldots,x_N)
-  \right|_{u_1 = x_1},
-  \ldots,
-  \left. \frac{\partial}{\partial u_N}
-    f(x_1,\ldots,x_{N-1},u_N)\right|_{u_N = x_N}
-\right\rangle.
+\left[
+  \left. 
+    \frac{\partial}{\partial u_1} f(u_1,x_2,\ldots,x_N)
+  \right|_{u_1 = x_1}
+  \ \ \cdots \ \ 
+  \left. 
+    \frac{\partial}{\partial u_N}  f(x_1,\ldots,x_{N-1},u_N)
+   \right|_{u_N = x_N}
+\right]
 \]
 %
 Here new variables $u_n$ are introduced as bound variables to
