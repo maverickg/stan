@@ -364,13 +364,14 @@ gradients and Jacobians and their evaluation at a point.
 
 \subsection{Direct Calculation of Gradients of Programs}
 
-The C++ program in \reffigure{normal-log-gradient-cpp} calculates
-derivatives of the function given in \refeq{normal-log-density} with
-respect to $\mu$ and $\sigma$ for a constant $y$.
+The following complete C++ program calculates derivatives of the
+function given in \refeq{normal-log-density} with respect to its mean
+($\mu$) and standard deviation ($\sigma$) parameters for a constant
+outcome ($y$).  The first block assigns the constant and independent
+variables, the second block computes the dependent variable and prints
+the value, and the final block computes and prints the gradients.
 %
-\begin{figure}
 \begin{quote}
-\small
 \begin{Verbatim}
 #include <cmath>
 #include <boost/math/constants.hpp>
@@ -392,15 +393,6 @@ int main() {
 }
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it Complete C++ program using \code{stan::agrad} to
-  compute the derivatives of the log normal density with respect to
-  its mean and standard deviation parameters.  The first block assigns
-  the constant and independent variables, the second block computes
-  the dependent variable and prints the value, and the final block
-  computes and prints the
-  gradients.}\label{normal-log-gradient-cpp.figure}
-\end{figure}
 %
 Constants like \code{y} are assigned to type \code{double} variables
 and independent variables like \code{mu} and \code{sigma} are assigned
@@ -416,13 +408,11 @@ variables.  The derivatives of the dependent variable with respect to
 the independent variables may then be extracted from the independent
 variables with the member function \code{adj()}.
 
-The gradients may be calculated and extracted automatically using the
-two-argument \code{grad} function, as shown in
-\reffigure{normal-log-gradient-cpp-2}.
+The gradient evaluated at the input can also be extracted as a
+standard vector using the member function \code{grad()} of
+\code{agrad::var}.
 %
-\begin{figure}
-\vspace*{-12pt}
-\begin{quote}\small
+\begin{quote}
 \begin{Verbatim}
 #include <vector>
 ...
@@ -434,18 +424,13 @@ two-argument \code{grad} function, as shown in
             << " d.f / d.sigma = " << g[1] << std::endl;
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it Alternative method to extract gradient as a
-  standard vector.  The ellision (\code{...}) represents all of the
-  code from \reffigure{normal-log-gradient-cpp} up to but not
-  including the final block; the replacement code populates a standard
-  vector with the gradient.}\label{normal-log-gradient-cpp-2.figure}
-\end{figure}
 %
-The standard vector \code{theta} holds the dependent variables and the
-standard vector \code{g} is used to hold the result.  The two-argument
-\code{grad} function is called on the dependent variable to propagate
-the derivatives and fill \code{g} with the gradient.
+The ellision (\code{...}) represents all of the code from the previous
+program up to but not including the final block.  The standard vector
+\code{theta} holds the dependent variables and the standard vector
+\code{g} is used to hold the result.  The function \code{grad()}
+function is called on the dependent variable to propagate the
+derivatives and fill \code{g} with the gradient.
 
 \subsection{Coding Template Functions for Automatic Differentiation}
 
@@ -459,11 +444,12 @@ differentiated can all be instantiated to \code{agrad::var} types.
 For the most flexiblity, functions should be separately templated in
 all of their arguments so as to support any combination of primitive
 (e.g., \code{double}, \code{int}) and autodiff (\code{agrad::var})
-instantiations.  For example, normal log density function can be
-defined as shown in \reffigure{normal-log-density-function}.
-%
-\begin{figure}
-\begin{quote}\small
+instantiations.  
+
+For example, the following templated C++ function computes the log
+normal density as defined in \refeq{normal-log-density}.
+%%
+\begin{quote}
 \begin{Verbatim}
 #include <boost/math/tools/promotion.hpp>
 
@@ -476,6 +462,57 @@ normal_log(const T1& y1, const T2& y2, const T3& y3) {
       - log(sigma)
       - 1 / sqrt(2 * pi<double>());
 }
+\end{Verbatim}
+\end{quote}
+%
+
+\subsubsection{Argument-Dependent Lookup for Function Resolution}
+
+In order to allow built-in functions such as \code{log()} and
+\code{pow()} to be instantiated with arguments of type
+\code{agrad::var} and primitive C++ types, the primitive version of
+the function is brought in with a \code{using} statement, as in
+\code{using~std::pow;}.  This brings the version of \code{pow()} that
+applies to \code{double} arguments into scope.  The definition of
+\code{pow()} for autodiff variables \code{stan::agrad} is brought in
+through argument-dependent lookup
+\cite[Section~3.4]{cpp-standard:2003}, which brings the namespace of
+any argument variables into scope for the purposes of resolving
+function applications.
+
+
+\subsubsection{Traits Metaprogram for Computing Return Types}
+
+Boost's traits-based metaprogram \code{promote\_args}
+\citep{Boost:2011} is designed to calculate return types for highly
+templated functions like \code{normal\_log()}.
+
+In general, for an automatically differentiated function, the return
+type should be \code{double} if all the input arguments are primitive
+integers or double-precision floating point values, and
+\code{agrad::var} if any of the arguments is of type
+\code{agrad::var}.
+
+Given a sequence of types $\code{T1}, \ldots, \code{TN}$, the template
+structure \code{promote\_args<T1,...,TN> } defines a typedef named
+\code{type}, which is defined to be \code{double} if all the inputs
+are \code{int} or \code{double}, and \code{agrad::var} if any of the
+input types is \code{agrad::var}.  The keyword \code{typename} is
+required to let the C++ parser know that the member variable is a
+typedef rather than a regular value.  The Boost promotion mechanism is
+used throughout the \code{stan::agrad} library to define both return
+types and types of variables for intermediate results.  For instance,
+\code{y~-~mu} would be assigned to an intermediate variable of type
+\code{promote\_args<T1,T2>::type}.
+
+The fully templated definition allows the template parameters
+\code{T1}, \code{T2}, or \code{T3} to be instantiated as independent
+variables\, \mbox{\rm (\code{agrad::var})} or constants\, \mbox{\rm
+  (\code{double}, \code{int})}.  For example, it can be used in place
+of the direct definitions in the previous programs as
+%
+\begin{quote}
+\begin{Verbatim}
 ...
 double y = 1.3;
 stan::agrad::var mu = 0.5, sigma = 1.2;
@@ -484,54 +521,8 @@ stan::agrad::var lp = normal_log(y,mu,sigma);
 ...
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it Templated C++ function to compute the log normal
-  density.  This fully templated definition allows the template
-  parameters \code{T1}, \code{T2}, or \code{T3} to be instantiated as
-  independent variables\, \mbox{\rm (\code{agrad::var})} or
-  constants\, \mbox{\rm (\code{double}, \code{int})}.  Boost's
-  promotion mechanism is used to calculate the return type. This
-  function can be dropped into the previous example, replacing the
-  definition of \code{lp} with the one given
-  here.}\label{normal-log-density-function.figure}
-\end{figure}
-%
-As written, the function in \reffigure{normal-log-density-function}
-can be applied to any of the eight combinations of \code{double} and
-\code{var} arguments.  
 
-Boost's traits-based metaprogram \code{promote\_args}
-\citep{Boost:2011} is designed to calculate return types in just such
-applications.  In general, the return type should be \code{double} if
-all the input arguments are primitive integers or double-precision
-floating point values, and \code{agrad::var} if any of the arguments
-is of type \code{agrad::var}.  Given a sequence of types $\code{T1},
-\ldots, \code{TN}$, the structure
-\code{boost::math::tools::promote\_args<T1,...,TN> } defines a typedef
-named \code{type} which is defined to be the result of promoting the
-input types to a common type to which they can all be assigned.  The
-promotion of $\code{T1}, \ldots, \code{TN}$ is defined so that the
-result is \code{double} if all the inputs are \code{int} or
-\code{double}, and \code{agrad::var} if any of the input types is
-\code{agrad::var}.  The label \code{typename} before the typedef is
-required to let the C++ parser know that the member variable is a
-typedef rather than a regular value.  The Boost promotion mechanism is
-used throughout the \code{stan::agrad} library to define both return
-types and types of variables for intermediate results.  For instance,
-\code{y~-~mu} would be assigned to an intermediate variable of type
-\code{promote\_args<T1,T2>::type}.
 
-In order to allow function such as \code{log} and \code{pow} to be
-instantiated with arguments of type \code{agrad::var} and primitive
-C++ types, the primitive version of the function is brought in with a
-\code{using} statement, as in \code{using~std::pow;}.  This brings the
-namespace for primitives into scope and allows \code{pow} to be
-applied to primitive \code{double} and \code{int} types.  The
-appropriate function for autodiff variables \code{stan::agrad} is
-brought in through argument-dependent lookup
-\cite[Section~3.4]{cpp-standard:2003}, which brings the namespace of
-any argument variables into scope for the purposes of resolving
-function applications.
 
 
 \subsection{Calculating the Derivatives of Functors with Functionals}
@@ -539,17 +530,39 @@ function applications.
 The \code{stan::agrad} library provides a fully abstracted approach to
 automatic differentiation that uses a C++ functor to represent a
 function to be differentiated and a functional for the gradient
-operator.  A full example is shown in \reffigure{normal-functor}.
+operator.  
+
+\subsubsection{Eigen C++ Library for Matrices and Linear Algebra} 
+
+Here and throughout \code{stan::agrad}, the Eigen C++ library for
+matrix operations and linear algebra is used \cite{Eigen:2013}.
+
+The type \code{Matrix<T,R,C>} is the Eigen type for matrices
+containing elements of type \code{T}, with row and column type
+\code{C}.  The \code{stan::agrad} library uses three possible
+instantiations, \code{Matrix<T,Dynamic,1>} for (column) vectors,
+\code{Matrix<T,1,Dynamic>} for row vectors, and
+\code{Matrix<T,Dynamic,Dynamic>} for matrices.  These three instances
+are all specialized with their own operators in \code{Eigen}.  Like
+the standard template library's \code{std::vector} class, these all
+allocate memory for elements dynamically on the C++ heap.
+
+\subsubsection{Definining Functors in C++}
+
+A functor in C++ is a function that defines \code{operator()} and can
+hence behaves syntactically like a function.  For example, the normal log
+likelihood may be defined directly as a functor as follows.
 %
-\begin{figure}
-\begin{quote}\small
+\begin{quote}
 \begin{Verbatim}
+#include <stan/agrad/autodiff.hpp>
+
 using Eigen::Matrix;  using Eigen::Dynamic;
 
-struct normal_log_likelihood {
+struct normal_ll {
   const Matrix<double,Dynamic,1> y_;
 
-  mean_sd(const std::vector<double>& y) : y_(y) { }
+  normal_ll(const std::vector<double>& y) : y_(y) { }
 
   template <typename T>
   T operator()(const Matrix<T,Dynamic,1>& theta) {
@@ -560,10 +573,34 @@ struct normal_log_likelihood {
     return lp;
   }
 };
+\end{Verbatim}
+\end{quote}
+%
+The variable \code{y\_} is used to store the data vector in the
+structure.  The \code{operator()} defines a function whose argument
+argument type is the Eigen type for vectors with elements of type
+\code{T}; the result is also defined to be of type \code{T}. 
 
+
+\subsubsection{Functionals in C++}
+
+A functional in C++ is a function that applies to a functor.  For
+functional autodiff in \code{stan::agrad}, the functor must define an
+\code{operator()} that can be applied to an Eigen vector containing
+elements of type \code{agrad::var}.  In the running example, the
+elements of the vector argument are declared to have the type of the
+template parameter \code{T}, which can be instantiated to
+\code{agrad::var} for differentiation and to \code{double} for
+testing.
+
+The following code calculate the gradient of the functor at a
+specified input point.
+%
+\begin{quote}
+\begin{Verbatim}
 Matrix<double,Dynamic,1> y(3);
 y << 1.3, 2.7, -1.9;
-normal_log_likelihood f(y);
+normal_ll f(y);
 
 Matrix<double,Dynamic,1> theta(2);
 theta << 1.3, 2.9;
@@ -573,63 +610,19 @@ double fx;
 stan::agrad::gradient(f, x, fx, grad_fx);
 \end{Verbatim}
 \end{quote}
-\caption{\small\it Definition of the normal log likelihood function as
-  a functor to allow gradient calculations with respect to mean and
-  standard deviation using \code{stan::agrad}.  The argument type is
-  the Eigen type for vectors with elements of type \code{T} and the
-  result is also defined to be of type \code{T}.  The likelihood
-  function is instantiated as \code{f} with a vector of data.  The
-  argument \code{theta} is instantiated with the parameter values.
-  Then a scalar \code{fx} is defined to hold the function value and an
-  Eigen vector \code{grad\_fx} is defined to hold the gradient.  The
-  function \code{gradient} is then called to calculate the value and
-  the gradient from the function \code{f} and input
-  \code{x}.}\label{normal-functor.figure}
-\end{figure}
 %
-
-A functor in C++ is a function that defines \code{operator()} and can
-hence behaves syntactically like a function.  For example, in the code
-in \reffigure{normal-functor}, the expression \code{f(x)} denotes the
-value of \code{f} applied to \code{x}.  A functional in C++ is a
-function that applies to a functor.  For functional autodiff in
-\code{stan::agrad}, the functor must define \code{operator()} member
-which can be applied to an Eigen vector containing elements of type
-\code{agrad::var}.  In \reffigure{normal-functor}, the elements of the
-vector argument are declared to have the type of the template
-parameter \code{T}, which can be instantiated to \code{agrad::var} for
-differentiation and to \code{double} for testing.
+The log likelihood function is instantiated as \code{f} with a vector
+of data.  The argument \code{theta} is instantiated with the parameter
+values.  Then a scalar \code{fx} is defined to hold the function value
+and an Eigen vector \code{grad\_fx} is defined to hold the gradient.
+The function \code{gradient} is then called to calculate the value and
+the gradient from the function \code{f} and input \code{x}.
 
 
-\begin{figure}
-\begin{quote}\small
-\begin{Verbatim}
-using Eigen::Matrix;  using Eigen::Dynamic;
-Matrix<double,Dynamic,1> x = ...;   // inputs
-Matrix<var,Dynamic,1> x_var(x.size());
-for (int i = 0; i < x.size(); ++i) x_var(i) = x(i);
-Matrix<var,Dynamic,1> f_x_var = f(x_var);
-Matrix<double,Dynamic,1> f_x(f_x_var.size());
-for (int i = 0; i < f_x.size(); ++i) f_x(i) = f_x_var(i).val();
-Matrix<double,Dynamic,Dynamic> J;
-for (int i = 0; i < f_x_var.size(); ++i) {
-  stan::agrad::set_zero_all_adjoints();
-  fx_var(i).grad();
-  for (int j = 0; j < x_var.size(); ++j)
-    J(i,j) = x_var(j).adj();
-}
-\end{Verbatim}
-\end{quote}
-\vspace*{-12pt}
-\caption{\small\it Calculating the Jacobian of a multivariate function \code{f}.
-  First, the arguments are converted to autodiff variables.  Next, the
-  function is applied and the result is converted back to a vector of
-  doubles.  Next, a loop is executed for each of the output
-  dimensions, applying a reverse pass to a particular output using
-  \code{grad()} to produce a row of the output Jacobian
-  \code{J}.}\label{direct-jacobian.figure}
-\end{figure}
-%
+
+
+
+
 
 \subsection{Calculating Jacobians}
 
@@ -640,47 +633,107 @@ Computationally, they work the same way, requiring a single forward
 pass to construct all of the outputs, then one reverse pass for each
 output dimension.
 
-Suppose that \code{f} is a functor that acceptss an dimensional Eigen
+\subsubsection{Direct Jacobian Calculation}
+
+Suppose that \code{f} is a functor that accepts an dimensional Eigen
 $N$-vector of autodiff variables as input (typically through
 templating) and produces an Eigen $M$-vector as output.
-\reffigure{direct-jacobian} shows how to calculate the Jacobian of the
-function evaluated at a given input \code{x}.
+The following code calculates the Jacobian of \code{f} evaluated 
+at the input \code{x}.
+
+\begin{quote}
+\begin{Verbatim}
+Matrix<double,Dynamic,1> x = ...;   // inputs
+
+Matrix<var,Dynamic,1> x_var(x.size());
+for (int i = 0; i < x.size(); ++i) x_var(i) = x(i);
+
+Matrix<var,Dynamic,1> f_x_var = f(x_var);
+
+Matrix<double,Dynamic,1> f_x(f_x_var.size());
+for (int i = 0; i < f_x.size(); ++i) f_x(i) = f_x_var(i).val();
+
+Matrix<double,Dynamic,Dynamic> J;
+for (int i = 0; i < f_x_var.size(); ++i) {
+  if (i > 0) stan::agrad::set_zero_all_adjoints();
+  fx_var(i).grad();
+  for (int j = 0; j < x_var.size(); ++j)
+    J(i,j) = x_var(j).adj();
+}
+\end{Verbatim}
+\end{quote}
+%
+First, the arguments are used to create autodiff variables.  Next, the
+function is applied and the result is converted back to a vector of
+doubles.  Then for each output dimension, automatic differentiation
+calculates the gradient of that dimension and uses it to populate a
+row of the Jacobian.  After the first gradient is calculated, all
+subsequent gradient calculations begin by setting the adjoints to
+zero; this is not required for the frist gradient because the adjoints
+are initialized to zero.
+
+
+\subsubsection{Functional Jacobian Calculation}
 
 Alternatively, the Jacobian functional can be applied directly to the
-function \code{f}, as shown in \reffigure{functional-jacobian}.
+function \code{f}, as follows.
 %
-\begin{figure}
-\begin{quote}\small
+\begin{quote}
 \begin{Verbatim}
-using Eigen::Matrix;  using Eigen::Dynamic;
-Matrix<double,Dynamic,1> x = ...;  // inputs
+...
 Matrix<double,Dynamic,Dynamic> J;
 matrix<double,Dynamic,1> f_x;
 stan::agrad::jacobian(f, x, f_x, J);
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it Direct computation of the Jacobian of a multivariate functor
-  \code{f} evaluated at a vector \code{x} using a
-  functional.}\label{functional-jacobian.figure}
-\end{figure}
+
 
 
 \section{How \code{\bfseries stan::agrad} Works}
 
-As seen in the previous section, the workhorse data type of
-\code{stan::agrad} is the type \code{stan::agrad::var}.  As shown in
-\reffigure{var-definition}, \code{var} is implemented following the pointer
-to implementation (Pimpl) pattern \citep{sutter:98,sutter:01}.  The
-pointer is to an implementation, which is of type
-\code{stan::agrad::vari}.  This allows the use of the resource
-allocation is initialization (RAII) pattern \citep{stroustrup:94},
-which neatly encapsulates the use of pointers and memory management
-for the user-facing application programmer interface
-(API).
+This section explains in detail how the data structures and algorithms
+of \code{stan::agrad} work.
 
-\begin{figure}
-\begin{quote}\small
+
+\subsection{Autodiff Variables}
+
+As seen in the previous section, the workhorse data type of
+\code{stan::agrad} is the type \code{stan::agrad::var}.  
+
+\subsubsection{Pointers to Implementations}
+
+The \code{var} class is implemented following the pointer to
+implementation (Pimpl) pattern \citep{sutter:98,sutter:01}.  The
+implementation class here is of type \code{vari}, and is covered in
+the next subsection.  Like the factory pattern, the Pimpl pattern
+encapsulates the details of the implementation class(es), which the
+API need not expose to clients.  For example, none of the example
+programs in the last section involved the \code{vari} type explicitly.
+Pimpl classes also encapsulate all the messy pointer semantics,
+providing easily managed stack-based classes.
+
+\subsubsection{Resource Allocation is Initialization}
+
+Like many Pimpl classes, \code{var} manages memory using a mechanism
+in which resource allocation is initialization (RAII) pattern
+\citep{stroustrup:94}.  With RAII, instances are managed on the stack
+and passed to functions just like primitive types.  Memory management
+is handled behind the scenes of the client-facing application
+programmer interface (API).
+
+Other classes implemented using Pimpl and RAII include
+\code{std::vector} and \code{Eigen::Matrix}, both of which allocate
+memory directly on the C++ heap and deallocate it when their variables
+go out of scope and their destructors are called.  As explained below,
+memory is managed slightly differently for \code{agrad::var}
+instances.
+
+\subsubsection{The \code{var} Class}
+
+The core of the \code{stan::agrad::var} class is just implemented as a
+pointer to implementations.
+%
+\begin{quote}
 \begin{Verbatim}
 class var {
 private:
@@ -694,17 +747,23 @@ public:
 };
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it The core of the \code{agrad::var} class definition,
-  which acts as a simple pointer to implementation wrapper; the class
-  additionally defines a copy constructor, constructors for the other
-  primitive types, and the full set of assignment and compound
-  assignment operators.  The destructor is implicit because there is
-  nothing to do to clean up instances; all of the work is done with
-  the memory management for \code{vari}. The class is defined in the
-  \code{stan::agrad} namespace, but the namespace declarations are not
-  shown to save space.}\label{var-definition.figure}
-\end{figure}
+%
+The defualt constructor \code{var()} produces a null pointer.  When
+instantiated with a \code{double} value, a new \code{vari} instance is
+constructed for the value.  The memory management for \code{vari} is
+handled through a specialization of \code{operator}~\code{new} as
+described below.
+
+The \code{var} class additionally defines a copy constructor,
+constructors for the other primitive types, and the full set of
+assignment and compound assignment operators.  The destructor is
+implicit because there is nothing to do to clean up instances; all of
+the work is done with the memory management for \code{vari}. The class
+is defined in the \code{stan::agrad} namespace, but the namespace
+declarations are not shown to save
+space.
+
+\subsubsection{The \code{chainable} Base Class}
 
 The definition of the base variable implementation class, \code{vari},
 is shown in \reffigure{vari-definition}.  The base class holds the
@@ -716,8 +775,7 @@ the base class \code{chainable}, which holds object which participate
 in the chain rule but do not simply hold values and adjoints (e.g.,
 some matrix operations).
 
-\begin{figure}
-\begin{quote}\small
+\begin{quote}
 \begin{Verbatim}
 struct chainable {
   chainable() { }
@@ -733,19 +791,18 @@ struct chainable {
 };
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it The core of the \code{agrad::chainable} base class.
-  The virtual method \code{chain()} implements derivative propagation
-  for extensions of \code{chainable}.  There is a static
-  specialization of \code{operator}~\code{new}, which handles custom
-  arena-based memory management.  The initialization and set-zero
-  are virtual methods used to initialize the adjoints during the
-  derivative propagation (reverse) pass.}\label{chainable-definition.figure}
-\end{figure}
+%
+The core of the \code{agrad::chainable} base class.  The virtual
+method \code{chain()} implements derivative propagation for extensions
+of \code{chainable}.  There is a static specialization of
+\code{operator}~\code{new}, which handles custom arena-based memory
+management.  The initialization and set-zero are virtual methods used
+to initialize the adjoints during the derivative propagation (reverse)
+pass.
 
+\subsubsection{The \code{vari} Class}
 
-\begin{figure}
-\begin{quote}\small
+\begin{quote}
 \begin{Verbatim}
 class vari : public chainable {
 public:
@@ -763,16 +820,18 @@ public:
 };
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it The core of the \code{agrad::vari} class, which
-  extends the base class \code{agrad::chainable} and holds the actual
-  value and adjoint for an autodiff variable instantiation.
-  namespace.  The adjoint manipulation methods are defined to set the
-  adjoint to 1 when initializing the dependent variable's adjoint and
-  0 for the set-to-zero operation. There is a further constructor that
-  manages memory slightly differently that will be discussed
-  later.}\label{vari-definition.figure}
-\end{figure}
+%
+The core of the \code{agrad::vari} class, which extends the base class
+\code{agrad::chainable} and holds the actual value and adjoint for an
+autodiff variable instantiation.  namespace.  The adjoint manipulation
+methods are defined to set the adjoint to 1 when initializing the
+dependent variable's adjoint and 0 for the set-to-zero
+operation. There is a further constructor that manages memory slightly
+differently that will be discussed
+later.
+
+
+\subsection{Memory Management}
 
 Instances of \code{vari} and its extensions are allocated using the
 specialized static \code{operator}~\code{new} definition.  The specialization
@@ -780,8 +839,7 @@ references the \code{alloc(size\_t)} method of the variable
 \code{ChainableStack::memalloc\_}, which provides a custom arena-based
 memory management for variable implementations.
 
-\begin{figure}
-\begin{quote}\small
+\begin{quote}
 \begin{Verbatim}
 template<typename T, typename AllocT>
 struct AutodiffStackStorage {
@@ -801,16 +859,15 @@ typedef AutodiffStackStorage<chainable,chainable_alloc>
   ChainableStack;
 \end{Verbatim}
 \end{quote}
-\vspace*{-12pt}
-\caption{\small\it The core of the \code{agrad::ChainableStack}
-  template class definition, which holds the memory arena for
-  reverse-mode autodiff.  The key components are \code{var\_stack\_},
-  which holds all of the usual autodiff variables and is traversed to
-  propagate derivatives, \code{var\_alloc\_stack}, which holds
-  objects allocated for autodiff that need to have their
-  \code{delete()} methods called, and \code{memalloc\_}, which is
-  the byte-level memory manager.}\label{chainable-stack-definition.figure}
-\end{figure}
+%
+The core of the \code{agrad::ChainableStack} template class
+definition, which holds the memory arena for reverse-mode autodiff.
+The key components are \code{var\_stack\_}, which holds all of the
+usual autodiff variables and is traversed to propagate derivatives,
+\code{var\_alloc\_stack}, which holds objects allocated for autodiff
+that need to have their \code{delete()} methods called, and
+\code{memalloc\_}, which is the byte-level memory
+manager.
 
 
 
