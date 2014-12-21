@@ -167,8 +167,7 @@ and its gradient evaluated a point
 \put(47,43){\vector(1,-1){16}}
 \end{picture}
 \end{center}
-\vspace*{-12pt}
-\caption{\small\it Expression graph for the normal log density
+\mycaption{expression-graph}{Expression graph for the normal log density
   function given in \refeq{normal-log-density}.  Each circle
   corresponds to an automatic differentiation variable, with the
   variable name given to the right in blue.  The independent variables
@@ -177,7 +176,7 @@ and its gradient evaluated a point
   each node is displayed inside the circle, with operands denoted by
   arrows.  Constants are shown in gray with gray arrows leading to
   them because derivatives need not be propagated to constant
-  operands.}\label{expression-graph.figure}
+  operands.}
 \end{figure}
 %
 This mathematical formula corresponds to the expression graph in
@@ -217,13 +216,13 @@ $v_{10}$ & $v_9 - (0.5 \log 2\pi)$
          & \multicolumn{2}{c}{$\partial v_{10} / \partial v_9 = 1$}
 \end{tabular}
 \end{center}
-\caption{\small\it Example of gradient calculation for the the log
+\mycaption{forward-pass}{Example of gradient calculation for the the log
   density function of a normally distributed variable, as defined in
   \refeq{normal-log-density}.  In the forward pass, as the stack is
   constructed from the first input $v_1$ up to the final output
   $v_{10}$, the values of the variables and partials are computed
   numerically according to the formulas given in the value and
-  partials columns of the table.}\label{forward-pass.figure}
+  partials columns of the table.}
 \end{figure}
 
 \reffigure{forward-pass} illustrates the forward pass used by
@@ -273,8 +272,7 @@ a_{1} & {+}{=} & a_4 \times (1) & a_1 = -v_5 / v_3
 a_{2} & {+}{=} & a_4 \times (-1) & a_2 = v_5 / v_3
 \end{array}
 \]
-\vspace*{-12pt}
-\caption{\small\it In the reverse pass, the stack is
+\mycaption{autodiff-stack}{In the reverse pass, the stack is
   traversed from the final output down to the inputs, and as each
   variable is visited, each of its operands is updated with the
   variable's adjoint times the partial with respect to the operand.
@@ -282,7 +280,6 @@ a_{2} & {+}{=} & a_4 \times (-1) & a_2 = v_5 / v_3
   the density function evaluated at $(y,\mu,\sigma)$, which matches
   the correct result given in \refeq{gradient-normal-log-density}
   after substitution for $v_4$ and $v_5$.}
-  \label{autodiff-stack.figure}
 \end{figure}
 %
 \reffigure{autodiff-stack} shows the processing for reverse mode,
@@ -400,17 +397,16 @@ to type \code{var}.  The result \code{lp} is assigned type \code{var}
 and calculated using ordinary C++ operations involving operators
 (e.g., \code{*}, \code{/}), compound assignments (e.g., \code{-=}),
 and library functions (e.g., \code{pow}, \code{log}, \code{pi}).  The
-value is available through the member function \code{val()} as soon as
-operations have been applied.  The call to the member function
+value is available through the method (member function) \code{val()} as soon as
+operations have been applied.  The call to the method
 \code{grad()} propagates derivatives from the dependent variable
 \code{lp} down through the expression graph to the independent
 variables.  The derivatives of the dependent variable with respect to
 the independent variables may then be extracted from the independent
-variables with the member function \code{adj()}.
+variables with the method \code{adj()}.
 
 The gradient evaluated at the input can also be extracted as a
-standard vector using the member function \code{grad()} of
-\code{agrad::var}.
+standard vector using the method \code{grad()} of \code{agrad::var}.
 %
 \begin{quote}
 \begin{Verbatim}
@@ -689,18 +685,15 @@ stan::agrad::jacobian(f, x, f_x, J);
 
 
 
-\section{How \code{\bfseries stan::agrad} Works}
 
-This section explains in detail how the data structures and algorithms
-of \code{stan::agrad} work.
+\section{Automatic Differentiation Variable Base Classes}\label{autodiff-base-classes.section}
 
+As demonstrated in the previous section, the client-facing data type
+of \code{stan::agrad} is the type \code{stan::agrad::var}, which is
+used in place of primitive \code{double} values in functions that are
+to be automatically differentiated.  
 
-\subsection{Autodiff Variables}
-
-As seen in the previous section, the workhorse data type of
-\code{stan::agrad} is the type \code{stan::agrad::var}.  
-
-\subsubsection{Pointers to Implementations}
+\subsection{Pointers to Implementations}
 
 The \code{var} class is implemented following the pointer to
 implementation (Pimpl) pattern \citep{sutter:98,sutter:01}.  The
@@ -709,10 +702,10 @@ the next subsection.  Like the factory pattern, the Pimpl pattern
 encapsulates the details of the implementation class(es), which the
 API need not expose to clients.  For example, none of the example
 programs in the last section involved the \code{vari} type explicitly.
-Pimpl classes also encapsulate all the messy pointer semantics,
-providing easily managed stack-based classes.
+Pimpl classes also encapsulate the messy and error-prone pointer
+manipulatiosn required for allocating memory.  
 
-\subsubsection{Resource Allocation is Initialization}
+\subsection{Resource Allocation is Initialization}
 
 Like many Pimpl classes, \code{var} manages memory using a mechanism
 in which resource allocation is initialization (RAII) pattern
@@ -728,7 +721,7 @@ go out of scope and their destructors are called.  As explained below,
 memory is managed slightly differently for \code{agrad::var}
 instances.
 
-\subsubsection{The \code{var} Class}
+\subsection{The \code{var} Class}
 
 The core of the \code{stan::agrad::var} class is just implemented as a
 pointer to implementations.
@@ -763,17 +756,16 @@ is defined in the \code{stan::agrad} namespace, but the namespace
 declarations are not shown to save
 space.
 
-\subsubsection{The \code{chainable} Base Class}
+\subsection{The \code{chainable} Base Class}
 
-The definition of the base variable implementation class, \code{vari},
-is shown in \reffigure{vari-definition}.  The base class holds the
-variable's value and adjoint.  The design is object-oriented, with the
-intention being that subclasses will extend \code{vari} and implement the
-virtual method \code{chain()} in a function-specific way to propagate
-derivatives with the chain rule.  The class \code{vari} itself extends
-the base class \code{chainable}, which holds object which participate
-in the chain rule but do not simply hold values and adjoints (e.g.,
-some matrix operations).
+The design of \code{stan::agrad}'s variable implementation classes is
+object-oriented, in that subclasses extend \code{chainable} and implement
+the virtual method \code{chain()} in a function-specific way to
+propagate derivatives with the chain rule.  The class \code{vari}
+itself extends the base class \code{chainable}, and holds the variable
+value and adjoint.  Extensisons of \code{vari} will hold pointers to
+operands for propagating derivatives and sometimes store extra
+information needed for the partial derivative calculations.
 
 \begin{quote}
 \begin{Verbatim}
@@ -800,8 +792,12 @@ management.  The initialization and set-zero are virtual methods used
 to initialize the adjoints during the derivative propagation (reverse)
 pass.
 
-\subsubsection{The \code{vari} Class}
+\subsection{The \code{vari} Class}
 
+The core of the \code{agrad::vari} class, which extends the base class
+\code{agrad::chainable} and holds the actual value and adjoint for an
+autodiff variable instantiation.  namespace.  
+%
 \begin{quote}
 \begin{Verbatim}
 class vari : public chainable {
@@ -821,17 +817,66 @@ public:
 \end{Verbatim}
 \end{quote}
 %
-The core of the \code{agrad::vari} class, which extends the base class
-\code{agrad::chainable} and holds the actual value and adjoint for an
-autodiff variable instantiation.  namespace.  The adjoint manipulation
+The adjoint manipulation
 methods are defined to set the adjoint to 1 when initializing the
 dependent variable's adjoint and 0 for the set-to-zero
 operation. There is a further constructor that manages memory slightly
 differently that will be discussed
 later.
 
+\section{Calculating Gradients}
 
-\subsection{Memory Management}
+There is a static method in the \code{agrad::chainable} class which
+performs the derivative propagation.
+%
+\begin{quote}
+\begin{Verbatim}
+static void grad(chainable* vi) {
+  typedef std::vector<chainable*>::reverse_iterator it_t;
+  vi->init_dependent(); 
+  it_t begin = ChainableStack::var_stack_.rbegin();
+  it_t end = ChainableStack::var_stack_.rend();
+  for (it_t it = begin; it < end; ++it)
+    (*it)->chain();
+}
+\end{Verbatim}
+\end{quote}
+%
+The function initializes the dependent variable to 1 using the
+\code{init\_dependent} method on \code{chainable}.  Then a reverse
+iterator is used to iterate over the variable stack from the top
+(\code{rbegin}) down to the bottom (\code{rend}), executing each
+\code{chainable} instance's \code{chain()} method.  Because the stack
+of \code{chainable} instances is sorted in topological order, each
+node's parents (superexpressions in which it directly appears) will
+have all been visited by the time the node's chain-rule propagation
+method is called.
+
+\subsection{Jacobians and Zeroing Adjoints}
+
+To calculate Jacobians efficiently, the same expression graph is used
+to calculate each row of the Jacobian.  Between each gradient call,
+the static method \code{agrad::set\_zero\_all\_adjoints()} is called for
+each row after the first.  This function walks over the variable stack
+\code{ChainableStack::var\_stack\_}, resetting each value to zero using
+the virtual method \code{set\_zero\_adjoint}.
+%
+\begin{quote}
+\begin{Verbatim}
+static void set_zero_all_adjoints() {
+  for (size_t i = 0; i < ChainableStack::var_stack_.size(); ++i)
+    ChainableStack::var_stack_[i]->set_zero_adjoint();
+}
+\end{Verbatim}
+\end{quote}
+%
+As in all of the client-facing API methods, pointer and global
+variable manipulation in encapsulated.
+
+% THIS FUNCTION SHOULD BE REWRITTEN WITH ITERATORS FOR CONSISTENCY
+
+
+\section{Memory Management}
 
 Instances of \code{vari} and its extensions are allocated using the
 specialized static \code{operator}~\code{new} definition.  The specialization
@@ -839,6 +884,11 @@ references the \code{alloc(size\_t)} method of the variable
 \code{ChainableStack::memalloc\_}, which provides a custom arena-based
 memory management for variable implementations.
 
+
+The core of the \code{agrad::ChainableStack} template class
+definition, which holds the memory arena for reverse-mode autodiff, is
+as follows.
+%
 \begin{quote}
 \begin{Verbatim}
 template<typename T, typename AllocT>
@@ -860,14 +910,379 @@ typedef AutodiffStackStorage<chainable,chainable_alloc>
 \end{Verbatim}
 \end{quote}
 %
-The core of the \code{agrad::ChainableStack} template class
-definition, which holds the memory arena for reverse-mode autodiff.
-The key components are \code{var\_stack\_}, which holds all of the
-usual autodiff variables and is traversed to propagate derivatives,
-\code{var\_alloc\_stack}, which holds objects allocated for autodiff
-that need to have their \code{delete()} methods called, and
-\code{memalloc\_}, which is the byte-level memory
-manager.
+The variables are all declared static, so they serve as global
+variables in the program.  The variable \code{var\_stack\_}, holds all
+of the usual autodiff variables and is traversed to propagate
+derivatives.  The variable \code{memalloc\_} holds the byte-level
+memory allocator, which is described in the next section.  
+
+The typedef \code{ChainableStack} specifies the template parameters
+for the template class \code{AutodiffStackStorage}.   Rather than
+creating instances,  the global variables are accessed through the
+typedef instantiation (e.g., \code{ChainableStack::var\_stack\_}).
+
+The \code{var\_alloc\_stack} variable holds objects allocated for
+autodiff that need to have their \code{delete()} methods called.  Such
+variables are required to specialize \code{chainable\_alloc}, which
+pushes them onto the \code{var\_alloc\_stack\_} during construction.
+The destructor is virtual because different instances will sit on the
+\code{var\_alloc\_stack\_}.
+
+
+
+
+
+\subsection{Byte-Level Memory Manager:  \code{memory::stack\_alloc}}
+
+The byte-level memory manager uses an arena-based strategy where
+blocks of memory are allocated and used to hold the \code{vari}
+instances created during the forward expression-graph building pass of
+automatic differentiation.  After the partials are propagated and final
+gradients calculated in the reverse pass, the memory for the
+expression graph is reclaimed all at once.
+
+The actual storage used is a standard vector of \code{char*} blocks.  
+New variables are filled into the blocks until they will no longer
+fit, at which point a new block is allocated.  The basic data
+structures used are defined in the \code{memory::stack\_alloc} class,
+the member variables of which are defined as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+class stack_alloc {
+private: 
+  std::vector<char*> blocks_;
+  std::vector<size_t> sizes_;
+  size_t cur_block_;
+  char* cur_block_end_;
+  char* next_loc_;
+  ...
+\end{Verbatim}
+\end{quote}
+%
+The variable \code{blocks\_} holds the actual memory.  
+The parallel vector \code{sizes\_} stores the sizeof each block.
+Then the variables indicate the index of the current block in
+\code{blocks\_}, the end of the current block's available memory, and
+the next location within the current block to place a new variable
+implementation.  
+
+Given a request for a given block of memory, if it fits in the
+current block, that is where it goes.  If it doesn't fit, a new block
+is allocated that is twice the size of the current block and all the
+indexes to the current position are updated.  
+
+Because memory allocation is such a low-level operation in the
+algorithm and because CPU branch misprediction is so expensive, the
+ability of the GNU compiler family to accept guidance in terms of how
+to sequence generated assembly code is used through the following
+macros.
+%
+\begin{quote}
+\begin{Verbatim}
+#ifdef __GNUC__
+#define likely(x)      __builtin_expect(!!(x), 1)
+#define unlikely(x)    __builtin_expect(!!(x), 0)
+#else
+#define likely(x)     (x)
+#define unlikely(x)   (x)
+#endif
+\end{Verbatim}
+\end{quote}
+%
+Then a condition is wrapped in \code{likely(...)} or \code{unlikely(...)} to
+give the compiler a hint as to which branch to predict by default.
+This improved throughput by a factor of nearly 10\% compared to the
+unadorned code.    The allocation method in \code{stack\_alloc} is
+defined as
+%
+\begin{quote}
+\begin{Verbatim}
+inline void* alloc(size_t len) {
+  char* result = next_loc_;
+  next_loc_ += len;
+  if (unlikely(next_loc_ >= cur_block_end_))
+    result = move_to_next_block(len);
+  return (void*)result;
+}
+\end{Verbatim}
+\end{quote}
+%
+Thus running out of memory in a block is marked as unlikely.  
+
+The \code{move\_to\_next\_block} method, not shown here, allocates a
+new block of memory and updates the underlying memory stacks.  No
+movement of existing data is required and thus no additional memory
+overhead is required to store the original and copy.  All of the
+memory allocation is also done to ensure 8-byte alignment for maximum
+access speed of pointers in 64-bit architectures.
+
+\subsection{Memory Lifecycle}
+
+An instance of \code{vari} is constructed for each subexpression
+evaluated in the program that computes the function to be
+automatically differentiated.  For each \code{vari} constructed,
+memory is allocated in the arena and a pointer to the memory allocated
+is pushed onto the variable stack.  Both the bytes and the stack of
+pointers must persist until the call to \code{grad} is used to compute
+derivatives, at which point it may be recovered.
+
+The \code{AutodiffStackStorage} class holds the variable stacks and
+the an instance of \code{memory::stack\_alloc} for the bytes used to
+create \code{chainable} instances.  The \code{AutodiffStackStorage}
+class also implements a no-argument \code{recover\_memory()} method
+which frees the stack of pointers making up the variable stack, and
+resets the byte-level \code{stack\_alloc} instance.  The underlying
+blocks of memory allocated within the \code{stack\_alloc} instance are
+intentionally \emph{not} freed by the \code{recover\_memory()} method.
+Rather, the underlying memory pool is saved and reused when the next
+call to automatic differentiation is made.  A method is available to
+clients in the \code{stack\_alloc} class to completely free the
+underlying memory pools.
+
+Within the functional implementations of automatic differentiation,
+the memory is all handled with exception-safe memory recovery that
+ensures whenver a derivative functional is called memory cannot leak
+even if the functor throws an exception.  The functionals do not free
+the underlying memory pool, but clients can do that manually after
+functionals are called if desired.
+
+
+
+
+\section{Constants}
+
+There are two equivalent ways to create constant autodiff variables
+from constant \code{double} values.  The first approach uses the unary
+constructor for \code{var} instances, which creates a new \code{var}
+instance \code{sigma} on the C++ function-call stack.
+%
+\begin{quote}
+\begin{Verbatim}
+var sigma(0.0);
+\end{Verbatim}
+\end{quote}
+%
+As shown in \refsection{autodiff-base-classes}, the underlying
+\code{vari} implemenetation to which the \code{var} points will
+construct a new instance, the memory for which will be allocated in
+the memory arena.
+
+The second approach to constructing a constant autodiff variable uses
+assignment.  Because the unary constructor of \code{var} is implicit
+(i.e., not declared \code{explicit}), assignment of a \code{double} to
+a \code{var} will construct a new \code{var} instance.  
+%
+\begin{quote}
+\begin{Verbatim}
+var tau = 0.0;
+\end{Verbatim}
+\end{quote}
+%
+The behavior of \code{sigma} and \code{tau} are the same because they
+have exacty the same effect on memory and the autodiff stack.
+
+It is also possible to construct instances using integers or other
+base types such as \code{unsigned long} or \code{float}.  The
+additional constructors are not shown.  Because the copy constructor
+is declared explicit, there is no ambiguity in the constructors.
+
+A \code{vari} inherits the no-op \code{chain()} method implementation
+from its superclass \code{chainable}.  Therefore, a constant will not
+propagate any derivative information.  Nevertheless, it is more
+efficient not to construct \code{var} instances out of double values
+and just use the \code{double} value directly, because
+\code{stan::agrad} specializes all of its functions and operators
+allow free variation between \code{var} and \code{double} argumens.
+
+
+\section{Functions}
+
+\subsection{Operand Storage Class}
+
+Most of the unary functions in \code{stan::agrad} are implemented as
+extensions of a simple helper class, \code{op\_v\_vari}, which stores
+the value of a unary function and its operand.  
+%
+\begin{quote}
+\begin{Verbatim}
+struct op_v_vari : public vari {
+  vari* avi_;
+
+  op_v_vari(double f, vari* avi) : vari(f), avi_(avi) { }
+};
+\end{Verbatim}
+\end{quote}
+%
+Constructing a \code{op\_v\_vari} instance passes the function value
+\code{f} to the superclass constructor, which stores it in member
+variable \code{val\_}.  The second argument to the constructor is a
+\code{vari} pointer, which is stored here in the member variable
+\code{avi\_}.  The \code{vari} will be set to The \code{op\_v\_vari}
+inherits the no-op \code{chain()} method from \code{chainable}.
+
+\subsection{Function Implementation}
+
+As a running example, consider the natural logarithm function, the
+derivative of which is
+%
+\[
+\log'(x) = \frac{1}{x}.
+\]
+%
+The implementation of the \code{log} function for \code{var}
+constructs a specialized \code{vari} instance as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+inline var log(const var& a) {
+  return var(new log_vari(a.vi_));
+}
+\end{Verbatim}
+\end{quote}
+%
+The argument \code{a.vi\_} supplied to the constructor is the variable
+implementation of the argument variable \code{a}, which is the operand
+for the \code{log} function.
+
+The class \code{log\_vari} is defined as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+struct log_vari : public op_v_vari {
+  log_vari(vari* avi) :
+    op_v_vari(std::log(avi->val_),avi) { }
+
+  void chain() {
+    avi_->adj_ += adj_ / avi_->val_;
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The constructor takes a pointer, \code{avi}, to the operand's
+implementation.  The value of the operand is given by
+\code{avi->val\_}.  The log of the operand's value is computed using
+\code{std::log()} and passed to the \code{op\_v\_vari} constructor,
+which stores it, along with the operand implementation itself,
+\code{avi}.  
+
+The virtual \code{chain()} method of the superclass \code{chainable}
+is overriden to divide the variable's adjoint, \code{adj\_}, by the
+operand's value, \code{avi\_->val\_}, and use the result to increment
+the operand's adjoint, \code{avi\_->adj\_}.  This corresponds to
+\code{+=} operations detailed in \reffigure{autodiff-stack}, in
+particular the one for the log given by $a_3 += a_8 \times (1 / v_3)$,
+in which $a_3$ and $v_3$ are the adjoint and value of the operand and
+$a_8$ the adjoint of the result.
+
+The \code{chain()} method is not called until the reverse pass of
+automatic differentiation is executed, so the derivative $1/x$, here
+given by the divison \code{/~avi\_->val\_} is both calculated lazily
+and also optimized versus the naive implementation which multiplied
+\code{adj\_} by the partial \code{1~/~avi\_->val\_}.  
+
+Most other functions are implemented in the same way as \code{log},
+with their own specialized \code{chain()} implementation and storage.
+The savings for operations like addition and subtraction are even
+larger because there is no need to do any multiplication at all.
+
+\subsection{Binary Functions}
+
+\subsubsection{Operands Storage Class}
+
+Not surprisingly binary functions of two autodiff variables are
+implemented using a specialized \code{vari} implementation.
+%
+\begin{quote}
+\begin{Verbatim}
+struct op_vv_vari : public vari {
+  vari* avi_;   vari* bvi_;
+
+  op_vv_vari(double f, vari* avi, vari* bvi)
+  : vari(f), avi_(avi), bvi_(bvi) { }
+};
+\end{Verbatim}
+\end{quote}
+%
+Like its unary counterpart, this class stores the value (\code{f}) and
+pointers to the operands (\code{avi\_}, \code{bvi\_}).  The number of
+operands need not be stored explicitly because it is implicit in the
+identity of the class. 
+
+For mixed operations of \code{var} and \code{double} variables, the
+following base \code{vari} is provided.
+%
+\begin{quote}
+\begin{Verbatim}
+struct op_vd_vari : public vari {
+  vari* avi_;
+  double bd_;
+
+  op_vd_vari(double f, vari* avi, double b)
+  : vari(f), avi_(avi), bd_(b) {  }
+};
+\end{Verbatim}
+\end{quote}
+%
+Although not strictly necessary given the above, the following
+symmetric class is provided for naming convenience.
+%
+\begin{quote}
+\begin{Verbatim}
+struct op_dv_vari : public vari {
+  double ad_;
+  vari* bvi_;
+
+  op_dv_vari(double f, double a, vari* bvi)
+  : vari(f), ad_(a), bvi_(bvi) { }
+};
+\end{Verbatim}
+\end{quote}
+
+
+
+\subsection{Memory Usage}
+
+The amount of memory required for automatic differentiation is the sum
+of the memory required for each expression in the expression graph.
+These expressions are represented with data structures like
+\code{log\_vari}.  The storage cost is as follows for a function with
+$K$ operands.
+%
+\begin{center}
+\begin{tabular}{l||l|l}
+{\it Description} & {\it Type} & {\it Size (bytes)}
+\\ \hline \hline
+value & \code{double} & 8
+\\
+operand pointers & \code{size\_t} & $K \times 8$
+\\
+vtable pointer  & \code{size\_t} & 8
+\\
+\code{var\_stack\_} ptr & \code{size\_t} & 8
+\\
+\\ \hline \hline
+{\sc total} & & 24 + $K \times 8$
+\end{tabular}
+\end{center}
+%
+Each expression stores its value using double-precision floating
+point, requiring 8 bytes.  Pointers are stored to the operand(s),
+requiring 8 bytes per pointer.  The number of operands is not stored,
+but is rather implicit in the identity of the class used for the
+\code{vari} and how it computes \code{chain()}.
+
+Furthermore, each expression gets a pointer on the variable stack,
+\code{var\_stack\_}.  The price for object orientation in the virtual
+\code{chain()} method is 8 bytes for the vtable pointer, which C++
+includes in any object with a virtual method; an instance of
+\code{chainable()} on the variable stack has its \code{chain()} method
+executed, which requires looking up the definition of \code{chain()}
+dynamically (at runtime).  This virtual function lookup price is
+required to store a heterogeneous collection of expressions on the
+variable stack, be it done with object orientation, as in
+\code{stan::agrad}, or with function pointers.
 
 
 
@@ -876,6 +1291,14 @@ manager.
 
 
 
+
+
+
+
+\section{Matrix Arithmetic and Linear Algebra}
+
+
+\section{Probability Functions}
 
 
 
@@ -887,12 +1310,30 @@ manager.
 
 \section{Derivatives}\label{derivative-definitions.section}
 
+\subsection{Derivatives}
+
+The derivative of a unary function $f:\reals \rightarrow \reals$ is
+also a unary function, conventionally written as $f'$.  The postfixed prime is
+the derivative operator, which maps unary functions to unary
+functions, $\cdot' : \left(\reals \rightarrow \reals\right)
+\rightarrow \left(\reals \rightarrow \reals\right)$.  The notation
+$\frac{\partial}{\partial x} f(x)$ can be thought of as a shorthand
+for $\left( \lambda x. f(x) \right)'$, which uses the lambda-calculus
+notation for functions. The $\partial x$ in the denominator can be
+thought of as binding the free occurrence of $x$ in $f(x)$.  The
+notation
+\[
+\left. \frac{\partial}{\partial x} f(x) \right|_{x = u}
+\]
+can also be written in terms of the derivative operator as $\left(
+  \lambda x. f(x) \right)'(u),$ or in this case, simply $f'(u)$.
+
 \subsection{Gradients}
 
-Suppose $f : \reals^N \rightarrow \reals$ is a continuously
-differentiatble $N$-ary function.  The gradient operator
-$\nabla:(\reals^N \rightarrow \reals)\rightarrow (\reals^N \rightarrow
-\reals^N)$ is defined so that $(\nabla f):\reals^N \rightarrow
+The gradient operator $\nabla:(\reals^N \rightarrow \reals)\rightarrow
+(\reals^N \rightarrow \reals^N)$ generalizes derivatives to multiple
+input dimensions.  The operator is defined so that if
+$f : \reals^N \rightarrow \reals$, then $(\nabla f):\reals^N \rightarrow
 \reals^N$ is a function mapping a point $x \in \reals^N$ to the
 derivative vector of $f$ evaluated at $x$, namely
 %
@@ -910,30 +1351,35 @@ derivative vector of $f$ evaluated at $x$, namely
 \right]
 \]
 %
-Here new variables $u_n$ are introduced as bound variables to
-avoid any confusion arising from using $x_n$ both as a component of
-the evaluation point $x$ and as a bound variable for differentiation.
+Here new variables $u_n$ are introduced as bound variables to avoid
+any confusion arising from using $x_n$ both as a component of the
+evaluation point $x$ and as a bound variable for differentiation.
+Within the $n$-th partial evaluation in the result, the variables
+$x_1,\ldots,x_{n-1}$ and $x_{n+1},\ldots,x_N$ are constants.  As with
+derivative symbols, the notation $\nabla_{\!x} \, f(x)$ uses a
+subscript to implicitly indicate binding of the $x$ in $f(x)$ and is
+defined to be equivalent to $\nabla(\lambda x. f(x))$.
 
-\section{Jacobians}
+\subsection{Jacobians}
 
-The Jacobian of a function $g : \reals^N \rightarrow \reals^M$ is just
-the matrix formed by stacking the gradients of $g$ projected down to
+The Jacobian of a function $g : \reals^N \rightarrow \reals^M$ is 
+the $M \times N$ matrix formed by stacking the transposed gradients of $g$ projected down to
 each of the $M$ result dimensions,
 %
 \[
 J(g)(x) = 
 \left[
 \begin{array}{c}
-(\nabla g_1)(x)
+(\nabla g_1)(x)^{\top}
 \\[2pt]
 \vdots
 \\[2pt]
-(\nabla g_M)(x)
+(\nabla g_M)(x)^{\top}
 \end{array}
 \right]
 \]
 %
-where $g_m(x) = g(x)_m$, the $m$-th component of the result, by definition.
+where $g_m(x)$ is defined to be $g(x)_m$, the $m$-th component of $g(x)$.
 
 \clearpage
 \nocite{Hogan:2014}
