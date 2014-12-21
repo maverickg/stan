@@ -1096,9 +1096,13 @@ and just use the \code{double} value directly, because
 allow free variation between \code{var} and \code{double} argumens.
 
 
-\section{Functions}
+\section{Functions and Operators}
 
-\subsection{Operand Storage Class}
+This section describes how functions are implemented in
+\code{stan::agrad}, beginning with an illustration of the basic
+mechanisms using a unary function and then moving on to binary functions.
+
+\subsection{Unary Operand Storage Class}
 
 Most of the unary functions in \code{stan::agrad} are implemented as
 extensions of a simple helper class, \code{op\_v\_vari}, which stores
@@ -1121,7 +1125,7 @@ variable \code{val\_}.  The second argument to the constructor is a
 \code{avi\_}.  The \code{vari} will be set to The \code{op\_v\_vari}
 inherits the no-op \code{chain()} method from \code{chainable}.
 
-\subsection{Function Implementation}
+\subsection{Unary Function Implementation}
 
 As a running example, consider the natural logarithm function, the
 derivative of which is
@@ -1189,7 +1193,21 @@ larger because there is no need to do any multiplication at all.
 
 \subsection{Binary Functions}
 
-\subsubsection{Operands Storage Class}
+As an example, consider the \code{pow()} function, defined by
+\[
+\mbox{pow}(x,y) = x^y,
+\]
+with derivatives
+\[
+\frac{d}{dx} x^y = y \, x^{y-1}
+\]
+and
+\[
+\frac{d}{dy} x^y = x^y \log x.
+\]
+
+
+\subsubsection{Binary Operands Storage Class}
 
 Not surprisingly binary functions of two autodiff variables are
 implemented using a specialized \code{vari} implementation.
@@ -1239,6 +1257,177 @@ struct op_dv_vari : public vari {
 };
 \end{Verbatim}
 \end{quote}
+%
+
+\subsubsection{Binary Function Implementation}
+
+There are three function implementations for \code{pow()} based on the
+type of the arguments, and each has its own specialized
+implementation, the first of of which follows the same pattern as
+\code{log}, only with two arguments.
+%
+\begin{quote}
+\begin{Verbatim}
+inline var pow(const var& base, const var& exponent) {
+  return var(new pow_vv_vari(base.vi_,exponent.vi_));
+}
+\end{Verbatim}
+\end{quote}
+%
+The second specialization is similar, only the \code{double} argument
+is passed by value to the specialized \code{vari} constructor.
+%
+\begin{quote}
+\begin{Verbatim}
+inline var pow(double base, const var& exponent) {
+  return var(new pow_dv_vari(base,exponent.vi_));
+}
+\end{Verbatim}
+\end{quote}
+%
+The last implementation with a \code{double} exponent first checks if
+there is a built-in special case that can be used, and if not,
+constructs a specialized \code{vari} for power.
+%
+\begin{quote}
+\begin{Verbatim}
+inline var pow(const var& base, double exponent) {
+  if (exponent == 0.5) return sqrt(base);
+  if (exponent == 1.0) return base;
+  if (exponent == 2.0) return square(base);
+  return var(new pow_vd_vari(base.vi_,exponent));
+}
+\end{Verbatim}
+\end{quote}
+%
+By using \code{sqrt}, \code{square}, or a no-op, less memory is
+allocated and fewer arithmetic operations are needed during the
+evaluation of \code{chain()} for the remaining expressions, thus
+saving both time and space.
+
+\subsubsection{Variable Implementations}
+
+The \code{pow\_vv\_vari} class for \code{pow(var,var)} is defined as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+struct pow_vv_vari : public op_vv_vari {
+  pow_vv_vari(vari* avi, vari* bvi)
+  : op_vv_vari(std::pow(avi->val_,bvi->val_),avi,bvi) { }
+
+  void chain() {
+    if (avi_->val_ == 0.0) return; 
+    avi_->adj_ += adj_ * bvi_->val_ * val_ / avi_->val_;
+    bvi_->adj_ += adj_ * std::log(avi_->val_) * val_;
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The constructor calls the \code{op\_vv\_vari} constructor to store the
+value and the two operand pointers.  The \code{chain()} implementation
+first tests if the base is 0, and returns because the derivatives are
+both zero, and thus there is nothing to do for the chain rule.  This
+test is not for efficiency, but rather because it avoids evaluating
+the logarithm of zero, which evaluates to special not-a-number value
+in IEEE floating-point arithmetic.%
+%
+\footnote{An even more efficient alternative
+would be to evaluate this condition ahead of time and just return a
+constant zero \code{var} at the top level.}
+%
+In the normal case of execution when the base is not zero, the
+\code{chain()} method increments the operands' adjoints based on the
+derivatives given above.  The expression for the derivative for the
+power operand (\code{bvi\_}) conveniently involves the value of the
+function itself, just as \code{exp} did.
+
+The implementations for mixed inputs simply compute a single
+derivative propagation.
+%
+\begin{quote}
+\begin{Verbatim}
+struct pow_vd_vari : public op_vd_vari {
+  pow_vd_vari(vari* avi, double b) :
+    op_vd_vari(std::pow(avi->val_,b),avi,b) {
+  }
+
+  void chain() {
+    avi_->adj_ += adj_ * bd_ * val_ / avi_->val_;
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The base argument (\code{avi}) is a variable implementation pointer
+that is stored and accessed in \code{chain()} as \code{avi\_}.  The
+exponent argument (\code{b}) is stored and accessed as \code{bd\_}.  
+
+
+\subsection{Arithmetic Operators}
+
+Basic arithmetic operators are implemented in exactly the same way as
+functions.  For example, addition of two variables is implemented
+using a support class \code{add\_vv\_vari}.
+%
+\begin{quote}
+\begin{Verbatim}
+inline var operator+(const var& a, const var& b) {    
+  return var(new add_vv_vari(a.vi_,b.vi_));
+}
+\end{Verbatim}
+\end{quote}
+%
+The implementation of \code{add\_vv\_vari} follows that of \code{exp},
+with the same naming conventions.  The derivatives are
+\[
+\frac{d}{dx} \left( x + y \right) = 1
+\]
+and
+\[
+\frac{d}{dy} \left( x + y \right) = 1.
+\]
+As a result, the \code{chain()} method can be reduced to just adding
+the expression's adjoints to that of its operands.
+%
+\begin{quote}
+\begin{Verbatim}
+void chain() {
+  avi_->adj_ += adj_;
+  bvi_->adj_ += adj_;
+}
+\end{Verbatim}
+\end{quote}
+%
+The mixed input operators are specialized in the same way as the mixed
+input functions.  The other built-in operators for unary subtraction,
+multiplication, and division are implemented similarly.
+
+\subsection{Boolean Operators}
+
+The boolean operators are implemented directly without creating new
+variable implementation instances.  For example, equality of two
+variables is implemented as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+inline bool operator==(const var& a, const var& b) {
+  return a.val() == b.val();
+}
+\end{Verbatim}
+\end{quote}
+%
+Mixed input types are handled similarly.
+%
+\begin{quote}
+\begin{Verbatim}
+inline bool operator==(const var& a, double b) {
+  return a.val() == b;
+}
+\end{Verbatim}
+\end{quote}
+%
+The other boolean operators are handled similarly.
 
 
 
@@ -1286,6 +1475,103 @@ variable stack, be it done with object orientation, as in
 
 
 
+\section{Assignment and Compound Assignment}
+
+\subsection{Assignment Operator}
+
+The assignment operator, \code{operator=}, is defined implicitly for
+\code{var} types.  Default assignment of \code{var} instances to
+\code{var} instances is handled through the C++ defaults, which
+perform a shallow copy of all member variables, in this case copying
+the \code{vari*} pointer.
+
+For assigning \code{double} values to \code{var} instances, the
+implicit constructor \code{var(double)} is used to construct a new
+variable instance and its \code{vari*} pointer is copied into the
+left-hand side \code{var}.  
+
+Assigning \code{var} typed expressions to \code{double} variables is
+forbidden.  
+
+\subsection{Compound Assignment Operators}
+
+The compound assignment operators such as \code{+=} are used as
+follows.
+%
+\begin{quote}
+\begin{Verbatim}
+var a = 3;
+var b = 4;
+a += b;
+\end{Verbatim}
+\end{quote}
+%
+and are intended to have the same effect as
+%
+\begin{quote}
+\begin{Verbatim}
+a = a + b;
+\end{Verbatim}
+\end{quote}
+%
+The compound operators are declared as member functions in \code{var}.
+%
+\begin{quote}
+\begin{Verbatim}
+struct var {
+...
+  inline var& operator*=(const var& b);
+  inline var& operator*=(double b);
+
+};
+\end{Verbatim}
+\end{quote}
+%
+The left-hand side is implicitly the variable in which the operators
+are declared.
+
+The implementations are defined outside the class declaration.  For variable
+arguments, the definition is as follows; the implementation for
+\code{double} arguments is similar.
+%
+\begin{quote}
+\begin{Verbatim}
+inline var& var::operator*=(const var& b) {
+  vi_ = new multiply_vv_vari(vi_,b.vi_);
+  return *this;
+}
+\end{Verbatim}
+\end{quote}
+%
+A new \code{multiply\_vv\_vari} instance is created and the pointer to
+it assigned to the member variable \code{vi\_} of the left-hand side
+variable in the compound assignment.  The expression \code{*this} is
+the value of the left-hand side variable in the assignment, which will
+be returned by reference according to the declared return type
+\code{var\&}.
+
+The effect of \code{a~+=~b;} is to modify \code{a}, assigning it to
+\code{a~+~b}.  This is a destructive operation on \code{var} instances
+such as \code{a}, but it is not a destructive operation on variable
+implementations.  A sequence such as 
+%
+\begin{quote}
+\begin{Verbatim}
+var a = 0;
+a + = b * b;
+a + = c * c;
+\end{Verbatim}
+\end{quote}
+%
+winds up creating the same expression graph as
+%
+\begin{quote}
+\begin{Verbatim}
+var a = b * b + c * c;
+\end{Verbatim}
+\end{quote}
+%
+with the same value pointed to by \code{a.vi\_} in the end.
 
 
 
