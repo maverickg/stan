@@ -167,16 +167,16 @@ and its gradient evaluated a point
 \put(47,43){\vector(1,-1){16}}
 \end{picture}
 \end{center}
-\mycaption{expression-graph}{Expression graph for the normal log density
-  function given in \refeq{normal-log-density}.  Each circle
+\mycaption{expression-graph}{Expression graph for the normal log
+  density function given in \refeq{normal-log-density}.  Each circle
   corresponds to an automatic differentiation variable, with the
   variable name given to the right in blue.  The independent variables
-  are highlighted in yellow on the bottom row, with the final node
-  highlighted in red on the top of the graph.  The function producing
-  each node is displayed inside the circle, with operands denoted by
-  arrows.  Constants are shown in gray with gray arrows leading to
-  them because derivatives need not be propagated to constant
-  operands.}
+  are highlighted in yellow on the bottom row, with the dependent
+  varaible highlighted in red on the top of the graph.  The function
+  producing each node is displayed inside the circle, with operands
+  denoted by arrows.  Constants are shown in gray with gray arrows
+  leading to them because derivatives need not be propagated to
+  constant operands.}
 \end{figure}
 %
 This mathematical formula corresponds to the expression graph in
@@ -1440,9 +1440,9 @@ These expressions are represented with data structures like
 $K$ operands.
 %
 \begin{center}
-\begin{tabular}{l||l|l}
+\begin{tabular}{l|ll}
 {\it Description} & {\it Type} & {\it Size (bytes)}
-\\ \hline \hline
+\\ \hline
 value & \code{double} & 8
 \\
 operand pointers & \code{size\_t} & $K \times 8$
@@ -1574,14 +1574,243 @@ var a = b * b + c * c;
 with the same value pointed to by \code{a.vi\_} in the end.
 
 
+\section{Variadic Functions}\label{variadic-functions.section}
+
+Some functions can take an arbitrary number of arguments.  One example
+that is useful in statistical models to prevent overflow and underflow
+is the log sum of exponentials operation, defined for an $N$-vector
+$x$ by
+%
+\[
+\mbox{log\_sum\_exp}(x) 
+= \log \sum_{n=1}^N \exp(x_n).
+\]
+%
+The function is symmetric in its arguments and the derivative with
+respect to $x_n$ is
+\[
+\frac{d}{d x_n} \mbox{log\_sum\_exp}(x)
+= \frac{\exp(x_n)}{\sum_{n=1}^N \exp(x_n)}.
+\]
+
+For variadic functions, \code{op\_vector\_vari} provides a base class
+with member variables for the array of operands and the array's size.
+%
+\begin{quote}
+\begin{Verbatim}
+struct op_vector_vari : public vari {
+  const size_t size_;
+  vari** vis_;
+
+  op_vector_vari(double f, 
+             const std::vector<stan::agrad::var>& vs) 
+  : vari(f), size_(vs.size()) {
+    vis_ = (vari**) operator new(sizeof(vari*) * vs.size()); 
+    for (size_t i = 0; i < vs.size(); ++i)
+      vis_[i] = vs[i].vi_;
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+Because it is used in an extension of \code{vari}, the specialized
+memory arena \code{operator}~\code{new} is used to allocate the
+memory.  Rather than use a \code{std::vector}, which allocates memory
+on the standard C++ heap, using the memory arena avoids fragmentation
+and also avoids having to call the destructor for \code{vari} extensions.
+
+The log sum of exponential operator uses an extension that calculates
+both the function value and the chain rule using external calls.
+%
+\begin{quote}
+\begin{Verbatim}
+struct log_sum_exp_vector_vari : public op_vector_vari {
+  log_sum_exp_vector_vari(const std::vector<var>& x)
+  : op_vector_vari(log_sum_exp_as_double(x), x) { }
+
+  void chain() {
+    for (size_t i = 0; i < size_; ++i)
+      vis_[i]->adj_ += adj_ * std::exp(vis_[i]->val_ - val_);
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The \code{chain()} method here loops over the operand pointers stored
+in the array \code{vis\_}, and for each one, increments its
+adjoint with the adjoint of the result times the derivative with
+resepct to the operand, as given by
+%
+\[
+\exp(\mbox{log\_sum\_exp}(x) - x_n)
+\ = \
+\frac{\exp(\mbox{log\_sum\_exp}(x))}{\exp(x_n)}
+\ = \
+\frac{\sum_{n=1}^N \exp(x_n)}
+     {\exp(x_n)}.
+\]
+%
+The function to compute the value, \code{log\_sum\_exp\_as\_double} is
+not shown here;  it uses the usual algebraic trick to preserve the
+most significant part of the result and avoid overflow on the
+remaining calculations, by
+%
+\[
+\log \sum_{n=1}^N \exp(x_n)
+= \max(x) + \log \sum_{n=1}^N \exp(x_n - \max(x)).
+\]
+%
+The data structure only requires storage for the operands and an
+additional size pointer.  There is also only a single virtual function
+call to \code{chain} that propagates derivatives for each argument.
+
+
+\section{Matrix Data Structures and Arithmetic}
+
+The \code{stan::agrad} library uses the Eigen C++ matrix library for
+storing basic matrix data structures, performing matrix arithmetic,
+and carrying out linear algebra operations such as calculating
+determinants.
+
+\subsection{Matrix Data Structures}
+
+The design is intrinsically univariate, with matrix and vector types
+being containers of univariate autodiff variables, i.e., instances of
+\code{var}.  This is not required by the \code{chainable} base class,
+but only \code{vari} instances are used in the library.
+
+The \code{stan::agrad} library uses the following three Eigen types.
+%
+\begin{center}
+\begin{tabular}{l|l}
+{\it Type} & {\it Description}
+\\ \hline
+\code{Matrix<T,Dynamic,Dynamic>} & matrix
+\\
+\code{Matrix<T,Dynamic,1>} & column vector
+\\
+\code{Matrix<T,1,Dynamic>} & row vector
+\end{tabular}
+\end{center}
+%
+The template parameter \code{T} indicates the type of elements in the
+matrix or vector.  Here, the template parameter will be instantiated
+to \code{double} for constants or \code{agrad::var} for automatic
+differentiation through the matrix.  
+
+
+\subsection{Type Inference}
+
+The arithmetic operations are typed, which allows inference of the
+result type.  For example, multiplying two matrices produces a matrix,
+multiplying a matrix by a column vector produces a column vector, and
+multiplying a row matrix by a matrix produces a row matrix.  As
+another example, multiplying a row vector by a column vector produces
+a scalar.  
+
+Matrix addition is treated differently.  Two matrices can be added, as
+can two column vetors or two row vectors.  Adding a scalar to a matrix
+(vector) is defined to add the scalar to each element of the matrix
+(vector).
+
+\subsection{Implementation}
+
+Matrix arithmetic functions such as multiplication essentially follow
+the design of the variadiac functions as discussed in
+\refsection{variadic-functions}.  
+
+\subsubsection{Dot Products}
+
+For example, multiplying a row vector by a column vector of the same
+size produces a scalar; if they are not the same size, an exception is
+raised.  If both arguments are \code{double}, Eigen matrix
+multiplication is used to produce the result.  If both arguments are
+vectors of element type \code{var}, a specialized \code{vari}
+extension is used.
+%
+\begin{quote}
+\begin{Verbatim}
+var multiply(const Matrix<var,1,Dynamic>& v1,
+             const Matrix<var,Dynamic,1>& v2) {
+  return var(new dot_product_vari(v1,v2));
+}
+\end{Verbatim}
+\end{quote}
+%
+The following is a simplified version of the actual
+\code{dot\_product\_vari} class; the library implementation includes
+extra methods for other uses and is highly templated for flexiblity).
+%
+\begin{quote}
+\begin{Verbatim}
+struct dot_product_vari : public vari {
+  vari** v1_;    vari** v2_;
+  size_t size_;
+  
+  dot_product_vari(vari** v1, vari** v2, size_t size) 
+  : vari(dot(v1,v2,size)), v1_(v1), v2_(v2), size_(size) { }
+
+  dot_product_vari(const Matrix<var,1,Dynamic>& v1,
+                   const Matrix<var,Dynamic,1>& v2)
+  : vari(dot(v1,v2)),
+    v1_((vari**) operator new(sizeof(vari*) * size)),
+    v2_((vari**) operator new(sizeof(vari*) * size)),
+    size_(v1.size()) {
+      for (size_t n = 0; n < size_; ++n) {
+        v1_[n] = v1[n].vi_;  
+        v2_[n] = v2[n].vi_;
+      }
+  }
+
+  void chain() {
+    for (size_t n = 0; n < size_; ++n) {
+      v1_[n]->adj_ += adj_ * v2_[n]->val_;
+      v2_[n]->adj_ += adj_ * v1_[n]->val_;
+    }
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The first constructor, for arrays of \code{vari*}, will be used later
+for matrix multiplication.  The second constructor, for vectors of
+\code{var}, is what is used in the function definition above.  Both
+the constructors compute the result using a call to an overloaded
+function, neither definition of which is shown.  The arena-based
+\code{operator}~\code{new} is used to allocate the member arrays
+\code{v1\_} and \code{v2\_}, then the body of the constructor
+populates them with the implementation pointers of the input operands.
+The chain rule is also straightforward because the partial with
+respect to each operand component is the corresponding component of
+the other operand vector.
+
+\subsubsection{Matrix Multiplication}
+
+To multiply two matrices, a matrix is created for the result and each
+entry is populated with the appropriate product of a row vector and
+column vector.  But the way in which it is done is economical in
+copies.  For each row of the first matrix and each column of the
+second matrix, an array of \code{vari*} is allocated in the autodiff
+memory arena and populated with the corresponding implementation
+pointers from the operand matrix rows or columns.  For the result
+matrix, an instance of \code{dot\_product\_vari} is constructed using
+the corresponding row and column variable implementation pointer
+arrays.  The resulting storage is much more economical than if a
+separate dot product were created for each entry; for instance, in
+multiplying a pair of $N \times N$ matrices, separate operand storage
+for each result entry would require a total of $\mathcal{O}(N^3)$
+storage, whereas the current scheme requires only $\mathcal{O}(N^2)$
+storage.  When multiplying a matrix by its own transpose, the memory
+required can be further cut in half.
 
 
 
 
 
+\section{Linear Algebra}
 
 
-\section{Matrix Arithmetic and Linear Algebra}
+
 
 
 \section{Probability Functions}
