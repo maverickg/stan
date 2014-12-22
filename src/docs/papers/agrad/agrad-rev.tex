@@ -1788,20 +1788,20 @@ the other operand vector.
 
 To multiply two matrices, a matrix is created for the result and each
 entry is populated with the appropriate product of a row vector and
-column vector.  But the way in which it is done is economical in
-copies.  For each row of the first matrix and each column of the
-second matrix, an array of \code{vari*} is allocated in the autodiff
-memory arena and populated with the corresponding implementation
-pointers from the operand matrix rows or columns.  For the result
-matrix, an instance of \code{dot\_product\_vari} is constructed using
-the corresponding row and column variable implementation pointer
-arrays.  The resulting storage is much more economical than if a
-separate dot product were created for each entry; for instance, in
-multiplying a pair of $N \times N$ matrices, separate operand storage
-for each result entry would require a total of $\mathcal{O}(N^3)$
-storage, whereas the current scheme requires only $\mathcal{O}(N^2)$
-storage.  When multiplying a matrix by its own transpose, the memory
-required can be further cut in half.
+column vector.  To avoid overcopying, for each row of the first matrix
+and each column of the second matrix, an array of \code{vari*} is
+allocated in the autodiff memory arena and populated with the
+corresponding implementation pointers from the operand matrix rows or
+columns.  For the result matrix, an instance of
+\code{dot\_product\_vari} is constructed using the corresponding row
+and column variable implementation pointer arrays.  The resulting
+storage is much more economical than if a separate dot product were
+created for each entry; for instance, in multiplying a pair of $N
+\times N$ matrices, separate operand storage for each result entry
+would require a total of $\mathcal{O}(N^3)$ memory, whereas the
+current scheme requires only $\mathcal{O}(N^2)$ memory.  When
+multiplying a matrix by its own transpose, the memory required can be
+further cut in half.
 
 
 
