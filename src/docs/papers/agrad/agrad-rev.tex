@@ -432,15 +432,18 @@ derivatives and fill \code{g} with the gradient.
 
 The previous example was implemented directly in the main function
 block using primitive operations.  The \code{stan::agrad} library
-implements all of the built-in C++ operators, (compound) assignment
-operators, and library functions in a way to be described later.  From
-a user perspective, a function can be automatically differentiated
-with respect to some input parameters if the arguments to be
-differentiated can all be instantiated to \code{agrad::var} types.
-For the most flexiblity, functions should be separately templated in
-all of their arguments so as to support any combination of primitive
-(e.g., \code{double}, \code{int}) and autodiff (\code{agrad::var})
-instantiations.  
+implements all of the built-in C++ boolean and arithmetic operators
+as well as the assignment and compound assignment operators.  
+It also implements all of the library functions.  Examples of
+operator, assignment, and function implementations are given later.
+
+From a user perspective, a function can be automatically
+differentiated with respect to some input parameters if the arguments
+to be differentiated can all be instantiated to \code{agrad::var}
+types.  For the most flexiblity, functions should be separately
+templated in all of their arguments so as to support any combination
+of primitive (e.g., \code{double}, \code{int}) and autodiff
+(\code{agrad::var}) instantiations.
 
 For example, the following templated C++ function computes the log
 normal density as defined in \refeq{normal-log-density}.
@@ -589,7 +592,7 @@ template parameter \code{T}, which can be instantiated to
 \code{agrad::var} for differentiation and to \code{double} for
 testing.
 
-The following code calculate the gradient of the functor at a
+The following code calculates the gradient of the functor at a
 specified input point.
 %
 \begin{quote}
@@ -613,11 +616,6 @@ values.  Then a scalar \code{fx} is defined to hold the function value
 and an Eigen vector \code{grad\_fx} is defined to hold the gradient.
 The function \code{gradient} is then called to calculate the value and
 the gradient from the function \code{f} and input \code{x}.
-
-
-
-
-
 
 
 \subsection{Calculating Jacobians}
@@ -1047,6 +1045,80 @@ even if the functor throws an exception.  The functionals do not free
 the underlying memory pool, but clients can do that manually after
 functionals are called if desired.
 
+
+\section{Functionals}
+
+The functional \code{gradient()} encapsulates the gradient
+calculations shown in the direct implementation as follows (the
+namespace qualificaations of functions and classes are omitted for
+readability).
+%
+\begin{quote}
+\begin{Verbatim}
+template <typename F> 
+void gradient(const F& f,
+              const Matrix<double,Dynamic,1>& x,
+              double& fx,
+              Matrix<double,Dynamic,1>& grad_fx) {
+  try {
+    Matrix<var,Dynamic,1> x_var(x.size());
+    for (int i = 0; i < x.size(); ++i)
+      x_var(i) = x(i);
+    var fx_var = f(x_var);
+    fx = fx_var.val();
+    grad(fx_var.vi_);
+    grad_fx.resize(x.size());
+    for (int i = 0; i < x.size(); ++i)
+      grad_fx(i) = x_var(i).adj();
+  } catch (const std::exception& /*e*/) {
+    recover_memory();
+    throw;
+  }
+  recover_memory();
+}
+\end{Verbatim}
+\end{quote}
+%
+Client code, as our earlier example shows, does not need to specify
+the template parameter \code{F} explicitly, because it can be
+automatically inferred from the static type of the argument functor
+\code{f}.  Because the functor argument reference is declared
+\code{const} here, its \code{operator()} implementation must also be
+marked \code{const}.  The final two arguments, \code{fx} and
+\code{grad\_fx} will be set to the value of the function and the value
+of the gradient respectively.  
+
+All of the code is wrapped in a \code{try} block with a corresponding
+\code{catch} that recovers memory and rethrows whatever standard
+exception was caught.  If no exception is thrown in the block of the
+\code{try}, then the function terminates with a call to recover
+memory (which ony resets memory---it does not free any of the
+underlying blocks that have been allocated, saving them for reuse).
+
+The main body of the algorithm first copies the input vector of
+\code{double} values, \code{x}, into a vector of \code{var} values,
+\code{x\_var}.  Then the functor \code{f} is applied to this newly
+created vector \code{x\_var}, resultinng in a type \code{var} result.
+This usage requires \code{f} to implement \code{operator()} that
+returns a \code{var} and takes as input a single vector of \code{var}.
+Any other information required to compute the function, such as data
+vectors (\code{double} or \code{int} values) or external callbacks
+such as a logging or error reporting mechanism, must be accessible to
+the \code{operator()} definition the functor \code{f}.
+
+The evaluation of \code{f} may throw an exception, which will result
+in whatever memory has been allocated up to the exception to be
+recovered.  After the function returns a \code{var}, its value is then
+extracted and assigned to the argument reference \code{fx}.
+
+Next, the return vector for the gradient, specified as argument
+reference \code{grad\_fx}, is resized if necessary.  
+
+Next, the static \code{grad} function is called directly on the
+variable implementation of the result.  This resulting derivatives are
+then extraced from the dependent variables in the argument vector and
+assigned to the argument reference vector \code{grad\_fx}, resizing it
+if necessary.
 
 
 
@@ -1605,7 +1677,7 @@ struct op_vector_vari : public vari {
   op_vector_vari(double f, 
              const std::vector<stan::agrad::var>& vs) 
   : vari(f), size_(vs.size()) {
-    vis_ = (vari**) operator new(sizeof(vari*) * vs.size()); 
+    vis_ = static_cast<vari**>(operator new(sizeof(vari*) * vs.size())); 
     for (size_t i = 0; i < vs.size(); ++i)
       vis_[i] = vs[i].vi_;
   }
@@ -1753,8 +1825,8 @@ struct dot_product_vari : public vari {
   dot_product_vari(const Matrix<var,1,Dynamic>& v1,
                    const Matrix<var,Dynamic,1>& v2)
   : vari(dot(v1,v2)),
-    v1_((vari**) operator new(sizeof(vari*) * size)),
-    v2_((vari**) operator new(sizeof(vari*) * size)),
+    v1_(static_cast<vari**>(operator new(sizeof(vari*) * size))),
+    v2_(static_cast<vari**>(operator new(sizeof(vari*) * size))),
     size_(v1.size()) {
       for (size_t n = 0; n < size_; ++n) {
         v1_[n] = v1[n].vi_;  
@@ -1799,9 +1871,42 @@ storage is much more economical than if a separate dot product were
 created for each entry; for instance, in multiplying a pair of $N
 \times N$ matrices, separate operand storage for each result entry
 would require a total of $\mathcal{O}(N^3)$ memory, whereas the
-current scheme requires only $\mathcal{O}(N^2)$ memory.  When
-multiplying a matrix by its own transpose, the memory required can be
-further cut in half.
+current scheme requires only $\mathcal{O}(N^2)$ memory.  
+
+\subsubsection{Specialized Matrix Multiplication}
+
+The \code{stan::agrad} library provides a custom
+\code{multiply\_self\_transpose} function because the memory required
+can be cut in half and the speed improved compared to applying the
+transposition and then the general matrix multiplication function. The
+same vectors make up the original matrix's rows and the transposed
+version's columns, so the same array of \code{vari**} can be reused.
+
+Reducing memory usage often has the pleasant side effect of increasing
+speed.  In the case of multiplying a matrix by its own transpose,
+fewer copy operations need to be performed.  In general, memory
+locality of algorithms will also be improved because of less need to
+bring copies into memory.  
+
+There is a further saving in multiplying a matrix by its own transpose
+by the elimination of the explicit transposition.  Although Eigen
+performs transposition with an expression template, the
+\code{stan::agrad} library would make a copy.  Although copying is
+rarely the bottleneck when autodiff is involved, it's not free; for
+Eigen matrices or standard library vectors, it involves memory
+allocation, traversal of whatever structure's being copied, and
+subsequent memory deallocation.
+
+If the matrix is lower triangular, only the non-zero portions of the
+matrix need to be stored and traversed and saved in the expression
+graph.  Multiplying a lower-triangular matrix by its own transposition
+is common in multivariate statistics, where it is used to reconstruct
+a positive definite matrix $\Omega$, such as a correlation,
+covariance, or precision matrix, from its Cholesky factor, $\Omega =
+L\,L^{\top}$.  So \code{stan::agrad} provides a built-in
+\code{multiply\_self\_transpose\_lower\_tri} function.
+
+
 
 
 
@@ -1897,6 +2002,13 @@ J(g)(x) =
 where $g_m(x)$ is defined to be $g(x)_m$, the $m$-th component of $g(x)$.
 
 \clearpage
+\nocite{Hogan:2014}
+\nocite{Bell:2012}
+\nocite{VandevoordeJosuttis:2002}
+\nocite{Giles:2008}
+\nocite{Gay:2005}
+\nocite{GriewankWalther:2008}
+\nocite{Fog:2014}
 \nocite{Hogan:2014}
 \nocite{Neal:2003}
 
