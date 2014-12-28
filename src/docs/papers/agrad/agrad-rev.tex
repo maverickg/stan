@@ -1676,8 +1676,9 @@ struct op_vector_vari : public vari {
 
   op_vector_vari(double f, 
              const std::vector<stan::agrad::var>& vs) 
-  : vari(f), size_(vs.size()) {
-    vis_ = static_cast<vari**>(operator new(sizeof(vari*) * vs.size())); 
+  : vari(f), size_(vs.size()), 
+    vis_(static_cast<vari**>(operator new(sizeof(vari*) 
+                                          * vs.size()))) {
     for (size_t i = 0; i < vs.size(); ++i)
       vis_[i] = vs[i].vi_;
   }
@@ -1785,20 +1786,33 @@ can two column vetors or two row vectors.  Adding a scalar to a matrix
 (vector) is defined to add the scalar to each element of the matrix
 (vector).
 
-\subsection{Implementation}
-
-Matrix arithmetic functions such as multiplication essentially follow
-the design of the variadiac functions as discussed in
-\refsection{variadic-functions}.  
-
-\subsubsection{Dot Products}
+\subsection{Dot Products}
 
 For example, multiplying a row vector by a column vector of the same
 size produces a scalar; if they are not the same size, an exception is
 raised.  If both arguments are \code{double}, Eigen matrix
-multiplication is used to produce the result.  If both arguments are
-vectors of element type \code{var}, a specialized \code{vari}
-extension is used.
+multiplication is used to produce the result.  
+
+The naive approach to dot products is to just evaluate the product and
+sums.  With two $N$-vectors $x$ and $y$, the resulting expression
+introduces $2N - 1$ nodes ($N$ multiplication, $N-1$ addition), one
+for each operator in
+\[
+\left( x_1 \times y_1 \right)
++ \left( x_2 \times y_2 \right) 
++ \cdots +
+\left( x_N \times y_N \right).
+\]
+
+Matrix arithmetic functions such as multiplication essentially follow
+the design of the variadiac functions as discussed in
+\refsection{variadic-functions}.   A specialized \code{vari} extension
+is used to cut the number of nodes allocated from $2N$ to 1 and cut the
+number of edges traversed during derivative propagation from $4N$ to $2N$.  
+
+The following function definition applies to multiplying a row vector
+by a column vector;  there is also a \code{dot\_product} operation
+that applies to row or column vectors in either position.
 %
 \begin{quote}
 \begin{Verbatim}
@@ -1856,24 +1870,48 @@ The chain rule is also straightforward because the partial with
 respect to each operand component is the corresponding component of
 the other operand vector.
 
-\subsubsection{Matrix Multiplication}
+\subsubsection{Mixed Type Operations}
+
+Taking the dot product of a vector with \code{double} entries and one
+with \code{var} entries cannot be done directly using the \code{Eigen}
+multiplication operator because it only applies to inputs with
+identical entry types.  
+
+A very naive approach would be to promote the \code{double} entries to
+\code{var} and then multiply two \code{var} matrices.  This introduces
+$N$ unnecessary nodes into the expression graphs and involves $N$
+unnecessary gradient propagation steps to constants.  A slightly less
+naive approach would be to write the loop directly, but that
+is problematic for the same reason as using a loop directly for two
+vectors of \code{var} entries.  Instead, \code{stan::agrad} introduces
+a custom \code{var} vector times \code{double} vector dot product
+function that introduces a single node into the expression graph and
+only requires $N$ propagations for the dot product of $N$-vectors.
+
+
+\subsection{Matrix Multiplication}
 
 To multiply two matrices, a matrix is created for the result and each
 entry is populated with the appropriate product of a row vector and
-column vector.  To avoid overcopying, for each row of the first matrix
-and each column of the second matrix, an array of \code{vari*} is
-allocated in the autodiff memory arena and populated with the
-corresponding implementation pointers from the operand matrix rows or
-columns.  For the result matrix, an instance of
+column vector.  A naive implementation for two matrices both composed
+of \code{var} entries could just use Eigen's built-in matrix
+multiplication, but this has the same problem as dot products, only
+$N^2$-fold.
+
+To avoid introducing unnecessary nodes into the expression graph, an
+array of \code{vari*} is allocated in the autodiff memory arena and
+populated with the corresponding implementation pointers from the
+operand matrix rows or columns.  For the result matrix, an instance of
 \code{dot\_product\_vari} is constructed using the corresponding row
 and column variable implementation pointer arrays.  The resulting
 storage is much more economical than if a separate dot product were
 created for each entry; for instance, in multiplying a pair of $N
 \times N$ matrices, separate operand storage for each result entry
 would require a total of $\mathcal{O}(N^3)$ memory, whereas the
-current scheme requires only $\mathcal{O}(N^2)$ memory.  
+current scheme requires only $\mathcal{O}(N^2)$ memory.
 
-\subsubsection{Specialized Matrix Multiplication}
+
+\subsection{Specialized Matrix Multiplication}
 
 The \code{stan::agrad} library provides a custom
 \code{multiply\_self\_transpose} function because the memory required
@@ -1909,16 +1947,450 @@ L\,L^{\top}$.  So \code{stan::agrad} provides a built-in
 
 
 
-
-
-
 \section{Linear Algebra}
 
+Basic matrix arithmetic operations just apply standard arithmetic
+operations to matrix elements.  Linear algebra operations are much
+more complicated in their internal structure.  Two excellent resources
+for results relating to derivatives of matrices are
+\cite{PetersenPedersen:2008,MagnusNeudecker:2007}, with
+\cite{Giles:2008} providing a translation to automatic differentiation
+terms.
+
+\subsection{Log Determinants}
+
+A common operation to calculate is the logarithm of the absolute
+determinant of a matrix; it shows up in change of variables problems
+and as the normalizing term of the multivariate normal density.  If
+$x$ is an $N \times N$ matrix, then the partials of the log absolute
+determinant are given by
+\[
+\frac{\partial}{\partial x} \log | \mbox{det}(x) |
+= \left( x^{-1} \right)^{\top}.
+\]
+On an element by element basis, this reduces to
+\[
+\frac{\partial}{\partial x_{m,n}} \log | \mbox{det}(x) |
+= \left( \left( x^{-1} \right)^{\top}\right)_{m,n}.
+\]
+
+\subsubsection{Precomputed Gradients Implementation}
+
+In some cases, such as log determinants, it is easier to compute at
+the same time as the function value.  The following utility variable
+implementation will be used to store vector and matrix derivatives
+with precomputed gradients.
+%
+\begin{quote}
+\begin{Verbatim}
+struct precomputed_gradients_vari : public vari {
+  const size_t size_;
+  vari** varis_;
+  double* gradients_;
+
+  precomputed_gradients_vari(double val, size_t size, 
+                             vari** varis, double* gradients)
+        : vari(val), size_(size),
+          varis_(varis), gradients_(gradients) { }
+
+  void chain() {
+    for (size_t i = 0; i < size_; ++i) 
+      varis_[i]->adj_ += adj_ * gradients_[i];
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+In addition to the value and adjoint stored by the parent class
+(\code{vari}), this class adds a parallel array of operands and
+gradients along with their size.  The chain rule just propagates the
+gradients to the operands via the chain rule.
+
+The following member template function of \code{stack\_alloc} allows
+arrays of any type to be allocated within the memory arena for
+automatic differentiation.
+%
+\begin{quote}
+\begin{Verbatim}
+template <typename T>
+inline T* alloc_array(size_t n) {
+  return static_cast<T*>(alloc(n * sizeof(T)));
+}
+\end{Verbatim}
+\end{quote}
+%
+The log gradient function uses this allocation method to populate a
+precomputed gradients variable implementation.
 
 
+\subsubsection{Log Determinant Implementation}
+
+The implementation of derivatives for the log determinant involves
+performing a Householder QR decomposition of the double values of the
+matrix, at which point the log absolute determinant and inverse can
+easily be extracted and manipulated into a form to be used
+
+\begin{quote}
+\begin{Verbatim}
+template <int R, int C>
+inline var 
+log_determinant(const Eigen::Matrix<var,R,C>& m) {
+  Matrix<double,R,C> m_d(m.rows(),m.cols());
+  for (int i = 0; i < m.size(); ++i)
+    m_d(i) = m(i).val();
+
+  Eigen::FullPivHouseholderQR<Matrix<double,R,C> > hh
+    = m_d.fullPivHouseholderQr();
+
+  double val = hh.logAbsDeterminant();
+
+  vari** operands = ChainableStack::memalloc_
+                  .alloc_array<vari*>(m.size());
+  for (int i = 0; i < m.size(); ++i)
+    operands[i] = m(i).vi_;
+
+  Matrix<double,R,C> m_inv_transpose 
+    = hh.inverse().transpose();
+  double* gradients = ChainableStack::memalloc_
+                        .alloc_array<double>(m.size());
+  for (int i = 0; i < m.size(); ++i)
+    gradients[i] = m_inv_transpose(i);
+
+  return var(new precomputed_gradients_vari(
+                   val,m.size(),operands,gradients));
+}
+\end{Verbatim}
+\end{quote}
+%
+First, the values of the \code{var} matrix are extracted and used to
+set the values in the \code{double} matrix \code{m\_d}.  Then the
+decomposition is performed using Eigen's \code{FullPivHouseHholderQR}
+class, which according to its documentation, which provides very good
+numerical stability \citep[Section~5.1]{GolubVanLoan:96} Next, the value
+of the log absolute determinant is extracted from the decomposition
+class.  Then the operands are set to the argument matrix's variable
+implementations to be used in the reverse pass of automatic
+differentiation.  Next, the inverse is transposed and used to populate
+the double array \code{gradients}.  The final step is to allocate (on
+the arena) a new precomputed gradients variable implementation (see
+the previous section for definitions); it is then wrap it in a
+\code{var} for return.
+ 
+The memory for both the gradients and the operands for the precomputed
+gradients implementation is allocated using the arena-based allocator
+\code{memalloc\_}.  The precomputed gradients structure cannot store
+standard vectors or Eigen vectors directly because they would not be
+properly deleted.%
+%
+\footnote{The \code{stan::agrad} memory manager provides an additional
+  stack to store pointers to \code{chainable} implementations that
+  need to have their destructors called.}
+
+The forward pass requires the value of the log determinant.  It would
+be possible to be lazy and reconstruct the input matrix from the
+operands and then calculate its inverse in the reverse pass.  This
+would save a matrix of double values in storage, but would require an
+additional QR decomposition.
+
+Critically for speed, all matrix calculations are carried out directly
+on \code{double} values rather than on \code{var} values.  The primary
+motivation is to reduce the size of the expression graph and
+subsequent time spent propagating derivatives in the reverse pass.  A
+pleasant side effect is that the matrix operations are carried out
+with all of Eigen's optimizations in effect; many of these are only
+possible with the memory locality provided by \code{double} values.
+
+
+\subsubsection{Specialized Log Determinant Implementation}
+
+The \code{stan::agrad} library provides a specialized log determinant
+implementation for symmetric, positive-definite matrices, which are
+commonly used as metrics for geometrical applications or as
+correlation, covariance or precision matrices for statistical
+applications.  Symmetric, positive-definite matrices can be Cholesky factored
+using the $\mbox{LDL}^{top}$ 
+\citep[Chapter~4]{GolubVanLoan:96}, which Eigen provides through its
+\code{LDLT} class.  Like the QR decomposition, after the decomposition
+is performed, extracting the log determinant and inverse is efficient.
 
 
 \section{Probability Functions}
+
+
+\section{Differential Equation Solver}
+
+The \code{stan::agrad} library provides a differential equation solver
+and allows derivatives of solutions to be calculated with respect to
+parameters and/or initial values.  The system state is coded as a
+\code{std::vector} and the system of equations coded as a functor.
+
+\subsection{Systems of Ordinary Differential Equations}
+
+Systems of differential equations describe the evolution of a
+multidimensional system over time from a given starting point.  
+
+The state of an $N$-dimensional system at time $t$ will be represented
+by a vector $y(t) \in \reals^N$. The change in the system is
+determined by a function $f(y,\theta,t)$ that returns the change in
+state given current position $y$, parameter vector $\theta \in
+\reals^K$, and time $t \in \reals$,
+\[
+\frac{\totald}{\totald t} y = f(y,\theta,t).
+\]
+The notation $f_n(y,\theta,t)$ will be used for the $n$-th component
+of $f(y,\theta,t)$, so that the change in $y_n$ can be given by
+\[
+\frac{\totald}{\totald t} y_n = f_n(y,\theta,t).
+\]
+
+Given an initial position 
+\[
+\xi = y(0) \in \reals^N
+\]
+at initial time $t = 0$, parameter values $\theta$, and system
+function $f$, it is possible to solve for state position $y(t)$ at
+other times $t$ using numerical methods.%
+%
+\footnote{It is technically possible to solve systems backward in time
+  for $t < t_0$, but \code{stan::agrad} is currently restricted to
+  forward solutions; signs can be reversed to code backward time
+  evolution.}
+%
+The \code{stan::agrad} library also supports initial positions given
+at times other than 0, which can be reduced to systems with initial
+time 0 with offsets.  \cite[Chapter~17]{PressEtAl:2007} provides an
+overview of ODE solvers. 
+
+
+\subsubsection{Example: Simple Harmonic Oscillator}
+
+The simple harmonic osillator in two dimensions ($N = 2$) with a
+single parameter $\theta$ is given by the state equations
+\[
+\frac{\totald}{\totald t} y_1 = y_2
+\ \ \ \ \mbox{and} \ \ \ \
+\frac{\totald}{\totald t} y_2 = -\theta y_1.
+\]
+%
+which can be written as a state function as
+\[
+f(y,\theta,t) = [y_2 \ \ \ -\theta y_1].
+\]
+
+
+% \subsubsection{Example: Soil Carbon Respiration}
+
+% For example, consider a model of carbon respiration that assumes two
+% pools of carbon, a labile (fast changing) pool and a recalcitrant
+% (slow changing) pool.  The pools can be representinged with a
+% two-dimensional state $C(t) = \left[ C_1(t) \ \ \ C_2(t) \right]$
+% where $C_k(t)$ is the concentration of carbon in pool $k$ at time $t$.
+% A simple model accounts for decomposition ($\kappa$) and transfer
+% ($\alpha$) of carbon,
+% %
+% \[
+% \frac{d}{dt} C_1(t) = -\kappa_1 \, C_1(t) + \alpha_{2,1} \, \kappa_2 \, C_2(t)
+% \]
+% %
+% \[
+% \frac{d}{dt} C_2(t) = -\kappa_2 \, C_2(t) + \alpha_{1,2} \, \kappa_1 \, C_1(t)
+% \]
+% %
+% Given an intial state $C(0)$ and values for parameters
+% $\kappa_1,\kappa_2,\alpha_{2,1},\alpha_{1,2}$, the system can be
+% solved through numerical integration to produce values $C(t)$ for a
+% specified sequence of $t$. 
+
+
+\subsection{Sensitivities of Solution to Inputs}
+
+Solutions of differential equations are often evaluated for their
+sensitivity to variation in parameters, i.e.,
+\[
+\frac{\partial}{\partial \theta} y(t),
+\]
+where $\theta$ is a vector of parameters, initial state, or both.
+This is useful for applications in optimization or parameter
+estimation and in reporting on (co)variation with respect to parameters.
+
+
+\subsection{Differentiating the Integrator}
+
+One way to compute sensitivities is to automatically differentiate the
+numerical integrator.  This can be done with \code{stan::agrad} with a
+suitably templated integrator, such as Boost's odeint
+\citep{AhnertMulansky:2014}. For example, \citep{WeberEtAl:2014} used
+the Dormand Prince integrator from odeint, a fifth-order Runge-Kutta
+method.  Because odeint provides only a single template parameter, all
+input variables (time, initial state, system parameters) were promoted
+to \code{var}.
+
+But this is inadvisable for two reasons.  First, it generates a large
+expression graph which consumes both memory and time during automatic
+differentiation.  This problem is exacerbated by the overpromotion
+required by limited templating.  Second, there is no way to control
+the error in the sensitivity calculations.
+
+
+\subsection{Coupled System}
+
+Both of the problems faced when attempting to differentiate the
+integrator can be solved by instead creating a coupled system by
+adding state variables for the sensitivities to the original system.
+The partial derivatives are then given by the solutions for the
+sensitivities.  
+
+For each state variable $n$ and each parameter or initial state
+$\alpha_m$ for which sensitivities are required, a newly defined state
+variable
+\[
+z_{n,m} = \frac{\partial}{\partial \alpha_m} y_m
+\]
+is added to the system.  This produces coupled systems of the
+following sizes, based on wheter derivatives are required with respect
+to the initial state, system parameters, or both.
+%
+\begin{center}
+\begin{tabular}{cc|c}
+\multicolumn{2}{c|}{\it Sensitivities} &
+\\
+{\it Initial State} & {\it Parameters} & {\it Coupled Size}
+\\ \hline
++ & - & $N \times (N + 1)$
+\\
+- & + & $N \times (K + 1)$ 
+\\
++ & + & $N \times (N + K + 1)$
+\end{tabular}
+\end{center} 
+
+With the coupled system, sensitivities are calculated by the
+integrator step by step and thus can be controlled for error.  The
+resulting sensitivities at solution times can then be used to
+construct an autodiff variable implementation of the output expression
+with respect to its inputs (initial state and/or parameters).
+
+
+\subsection{Differentiating an ODE Solution with Respect to a Parameter}
+
+The sensitivity for state dimension $n$ with respect to parameter $k$
+will be
+\[
+z = \frac{\partial}{\partial \theta} y,
+\]
+or componentwise, as
+\[
+z_{n,m} = \frac{\partial}{\partial \theta_m} y_n.
+\]
+%
+The time derivatives of $z$ needed to complete the coupled system
+function is is given componentwise by
+%
+\begin{eqnarray*}
+\frac{\totald}{\totald t} z_{n,m}
+& = &
+\frac{\totald}{\totald t} \frac{\totald}{\totald \theta_m} y_n
+\\[3pt]
+& = &
+\frac{\totald}{\totald \theta_m} \frac{\totald}{\totald t} y_n
+\\[3pt]
+& = & 
+\frac{\totald}{\totald \theta_m} f_n(y,\theta)
+\\[3pt]
+& = & 
+\frac{\partial}{\partial \theta_m} f_n(y,\theta)
++ \sum_{j = 1}^N \left( \frac{\partial}{\partial \theta_m} y_j \right) \, 
+         \frac{\partial}{\partial y_j} f_n(y,\alpha)
+\\[3pt]
+& = & 
+\frac{\partial}{\partial \theta_k} f_n(y,\theta)
++ \sum_{j=1}^N z_{j,m} \frac{\partial}{\partial y_j} f_n(y,\theta)
+\end{eqnarray*}
+%
+The sensitivity of a parameter is the derivative of the state of the
+system with respect to that parameter, with all other parameters held
+constant (but not the states).  Thus the sensitivities act as partial
+derivatives with respect to the parameters but total derivatives with
+respect to the states, because of the need to take into account the
+change in solution as parameters change.
+
+The coupled system will also need new initial states $\chi_{n,m}$ for
+the sensitivity $z_{n,m}$, which work out to be zero, because
+\[
+\chi_{n,m} = \frac{\partial}{\partial \theta_m} \xi_n = 0.
+\]
+
+\subsection{Differentiating an ODE Solution with Respect to the Initial State}
+
+The next form of coupling will be of initial states, with new state
+variables
+\[
+w = \frac{\partial}{\partial \xi} y,
+\]
+which works out componentwise to
+\[
+w_{n,k} = \frac{\partial}{\partial \xi_{k}} y_n.
+\]
+The simplest approach to working out sensitivities in this case is to
+define a new system with states offset by the initial condition
+\[
+u = y - \xi,
+\]
+with corresponding system function
+\[
+g(u,\theta) = f(u + \xi, \theta).
+\]
+The initial state is now a zero vector.
+
+Differentiating the parameter through the states, the necessary
+sensitivity calculations are for
+%
+\[
+\]
+Expanding, 
+%
+\begin{eqnarray*}
+\frac{\totald}{\totald t} w_{n,k}
+& = & \frac{\totald}{\totald t} \frac{\totald}{\totald \xi_{k}} y_n
+\\[3pt]
+& = & \frac{\totald}{\totald \xi_k} \frac{\totald}{\totald t} y_n
+\\[3pt]
+& = & \frac{\totald}{\totald \xi_k} f_n(y,\theta)
+\\[3pt]
+& = & \frac{\totald}{\totald \xi_k} f_n(u + \xi, \theta)
+\\[3pt]
+& = & \frac{\partial}{\partial \xi_k} f_n(u + \xi, \theta)
+\\[3pt]
+& & 
+{ } + \sum_{j=1}^N 
+        \left( \frac{\partial}{\partial \xi_k} u_j \right)
+           \frac{\partial}{\partial u_j} f_n(u + \xi, \theta)
+\\
+& & 
+ { } + \sum_{j=1}^N
+         \left( \frac{\partial}{\partial \xi_k} \xi_j \right)
+         \frac{\partial}{\partial \xi_j} f_n(u + \xi, \theta)
+\\[6pt]
+& = & 
+\frac{\partial}{\partial \xi_k} f_n(u + \xi, \theta)
+\\
+& & { } + \sum_{j=1}^N \left( u_j + \frac{\partial}{\partial \xi_k} \xi_j
+\right)
+\frac{\partial}{\partial y_j} f_n(y,\theta).
+\end{eqnarray*}
+%
+The last derivative $\partial \xi_j / \partial \xi_k$ is equal to 1 if
+$j = k$ and 0 otherwise.
+
+
+
+
+
+\section{Code Review and Unit Tests}
+
+Every pull request to GitHub is made using 
+The code in \code{stan::agrad} is thoroughly unit tested using the
+Google unit test framework for C++ \citep{GoogleTest:2014}.
 
 
 
@@ -2000,6 +2472,21 @@ J(g)(x) =
 \]
 %
 where $g_m(x)$ is defined to be $g(x)_m$, the $m$-th component of $g(x)$.
+
+
+\subsection{Matrix Derivatives}
+
+If $f:\reals^{M \times N} \rightarrow \reals$ is a function on $M
+\times N$ matrices, the derivative of $f$ with respect to $x$ is
+defined so that 
+\[
+\left( \frac{\partial}{\partial x} f(x) \right)_{i,j}
+=
+\frac{\partial}{\partial x_{i,j}} f(x).
+\]
+
+
+
 
 \clearpage
 \nocite{Hogan:2014}
