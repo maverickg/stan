@@ -55,6 +55,9 @@
 \end{abstract}
 
 \clearpage
+\tableofcontents
+
+\clearpage
 
 \section{Reverse-Mode Automatic Differentiation}
 
@@ -1508,11 +1511,11 @@ The other boolean operators are handled similarly.
 The amount of memory required for automatic differentiation is the sum
 of the memory required for each expression in the expression graph.
 These expressions are represented with data structures like
-\code{log\_vari}.  The storage cost is as follows for a function with
-$K$ operands.
+\code{log\_vari}.  The storage cost in the arena is as follows for a
+function with $K$ operands.
 %
 \begin{center}
-\begin{tabular}{l|ll}
+\begin{tabular}{r|cc}
 {\it Description} & {\it Type} & {\it Size (bytes)}
 \\ \hline
 value & \code{double} & 8
@@ -1522,7 +1525,6 @@ operand pointers & \code{size\_t} & $K \times 8$
 vtable pointer  & \code{size\_t} & 8
 \\
 \code{var\_stack\_} ptr & \code{size\_t} & 8
-\\
 \\ \hline \hline
 {\sc total} & & 24 + $K \times 8$
 \end{tabular}
@@ -1534,16 +1536,26 @@ requiring 8 bytes per pointer.  The number of operands is not stored,
 but is rather implicit in the identity of the class used for the
 \code{vari} and how it computes \code{chain()}.
 
-Furthermore, each expression gets a pointer on the variable stack,
-\code{var\_stack\_}.  The price for object orientation in the virtual
-\code{chain()} method is 8 bytes for the vtable pointer, which C++
-includes in any object with a virtual method; an instance of
-\code{chainable()} on the variable stack has its \code{chain()} method
-executed, which requires looking up the definition of \code{chain()}
-dynamically (at runtime).  This virtual function lookup price is
-required to store a heterogeneous collection of expressions on the
-variable stack, be it done with object orientation, as in
-\code{stan::agrad}, or with function pointers.
+Although there are 8 bytes of required for the \code{var} instances
+for the pointer to the implementation member variable (\code{vari*}),
+this is no more memory than would be used for the \code{vari*} itself.
+Wrapping the \code{vari*} in a pointer to implementation class does
+not increase memory usage.  Furthermore, many \code{var} instances
+will be allocated on the stack rather than on the heap; the only heap
+allocation required is for use in containers, such as standard vectors
+or Eigen matrices.  As with uses on the stack, there is no additional
+memory overhead for the \code{var} instance over directly storing a
+pointer or reference.
+
+In addition to the memory required for the \code{vari} instances, each
+expression gets a pointer on the variable stack, \code{var\_stack\_}.
+The price for object orientation in the virtual \code{chain()} method
+is 8 bytes for the vtable pointer, which C++ includes in any object
+with a virtual method so that it can dynamically resolve the
+implementation of the virtual method.  The cost for storing a
+heterogeneous collection of expressions on the variable stack is
+either a virtual function lookup using the vtable or pointer chasing
+to implementations with function pointers.
 
 
 
@@ -2114,8 +2126,6 @@ using the $\mbox{LDL}^{top}$
 is performed, extracting the log determinant and inverse is efficient.
 
 
-\section{Probability Functions}
-
 
 \section{Differential Equation Solver}
 
@@ -2270,6 +2280,14 @@ resulting sensitivities at solution times can then be used to
 construct an autodiff variable implementation of the output expression
 with respect to its inputs (initial state and/or parameters).
 
+The \code{stan::agrad} library currently uses the Dormand-Prince
+integrator implementation from Boost's odeint library
+\citep{AhnertMulansky:2014}, but the design is modular, with
+dependencies only on solving integration problems using \code{double}
+values.   So other integrators such as Sundials (???) and lsoda (???)
+may be useful, lsoda in particular because it will automatically
+handle stiff systems.
+
 
 \subsection{Differentiating an ODE Solution with Respect to a Parameter}
 
@@ -2283,11 +2301,13 @@ or componentwise, as
 z_{n,m} = \frac{\partial}{\partial \theta_m} y_n.
 \]
 %
-The time derivatives of $z$ needed to complete the coupled system
-function is is given componentwise by
+The time derivatives of $z$ needed to complete the coupled system can
+be given via a function $h$, defined and derived componentwise as
 %
 \begin{eqnarray*}
-\frac{\totald}{\totald t} z_{n,m}
+h_{n,m}(y,z,\theta,t)
+& = & \frac{\totald}{\totald t} z_{n,m}.
+\\[3pt]
 & = &
 \frac{\totald}{\totald t} \frac{\totald}{\totald \theta_m} y_n
 \\[3pt]
@@ -2304,7 +2324,7 @@ function is is given componentwise by
 \\[3pt]
 & = & 
 \frac{\partial}{\partial \theta_k} f_n(y,\theta)
-+ \sum_{j=1}^N z_{j,m} \frac{\partial}{\partial y_j} f_n(y,\theta)
++ \sum_{j=1}^N z_{j,m} \frac{\partial}{\partial y_j} f_n(y,\theta).
 \end{eqnarray*}
 %
 The sensitivity of a parameter is the derivative of the state of the
@@ -2315,10 +2335,14 @@ respect to the states, because of the need to take into account the
 change in solution as parameters change.
 
 The coupled system will also need new initial states $\chi_{n,m}$ for
-the sensitivity $z_{n,m}$, which work out to be zero, because
+the sensitivities $z_{n,m}$, all of which work out to be zero, because
 \[
 \chi_{n,m} = \frac{\partial}{\partial \theta_m} \xi_n = 0.
 \]
+
+The final system that couples the original state with sensitivities
+with respect to parameters has state $(y,z)$, initial conditions
+$\xi,\chi$, and system function $(f,h)$.
 
 \subsection{Differentiating an ODE Solution with Respect to the Initial State}
 
@@ -2331,23 +2355,21 @@ which works out componentwise to
 \[
 w_{n,k} = \frac{\partial}{\partial \xi_{k}} y_n.
 \]
-The simplest approach to working out sensitivities in this case is to
-define a new system with states offset by the initial condition
+Sensitivities can be worked out in this case by definining a new
+system with state variables offset by the initial condition,
 \[
-u = y - \xi,
+u = y - \xi.
 \]
-with corresponding system function
+This defines a new system function $g$ with the original parameters
+$\theta$ and original initial state $\xi$ now both treated as
+parameters,
 \[
-g(u,\theta) = f(u + \xi, \theta).
+g(u,(\theta,\xi)) = f(u + \xi, \theta).
 \]
-The initial state is now a zero vector.
-
-Differentiating the parameter through the states, the necessary
-sensitivity calculations are for
-%
-\[
-\]
-Expanding, 
+The new initial state is a zero vector by construction.  The
+derivatives are now with respect to the parameters of the revised
+system with state $u$, system function $g$, and parameters
+$\theta,\xi$, and work out to
 %
 \begin{eqnarray*}
 \frac{\totald}{\totald t} w_{n,k}
@@ -2379,18 +2401,177 @@ Expanding,
 \frac{\partial}{\partial y_j} f_n(y,\theta).
 \end{eqnarray*}
 %
-The last derivative $\partial \xi_j / \partial \xi_k$ is equal to 1 if
-$j = k$ and 0 otherwise.
+The derivative $\partial \xi_j / \partial \xi_k$ on the last line is
+equal to 1 if $j = k$ and equal to 0 otherwise.
+
+
+\subsection{Computing Sensitivities with Nested Automatic Differentiation}
+
+In order to add sensitivities with respect to paramters and/or initial
+states to the system, Jacobians of the system function $f$ are
+required with respect to the system state and parameters (where the
+parameters may include the initial states, as shown in the last
+section).  This is problematic because the derivative stack and memory
+allocation are static class variables and hence global.
+
+To get around this problem, \code{stan::agrad} allows nested
+derivative evaluations.  When the system derivatives are required to
+solve the system of ODEs, the current stack location is recorded,
+autodiff of the system takes place on the top of the stack, and then
+derivative propagation stops at the recorded stack location.  This
+allows arbitrary reverse-mode automatic differentiation to be nested
+inside other reverse-mode calculations.  The top of the stack can even
+be reused for Jacobian calculations without rebuilding an expression
+graph for the system being differentiated.
+
+\subsection{Putting Results Back Together}
+
+With nested calculations of the system Jacobian with respect to state
+variables along with Jacobians with respect to parameters and/or
+initial states, the derivatives of the system results are easy to put
+back together into new \code{vari} instances.  
+
+When the numerical integrator solves the coupled system, the solution
+is for the original state variables $y$ along with sensitivities
+$\frac{\totald}{\totald \theta} y$ and/or $\frac{\totald}{\totald \xi}
+y$.  These are all double-precision floating point values---the nested
+derivatives are all on the inside of the coupled system function.
+
+Given a number of solution times requested, $t_1,\ldots,t_J$, These
+state solutions and sensitivity solutions are used to create a
+\code{vari} instance for each $y_n(t_j)$.  Each of these variables is
+then connected via its sensitivity to each of the input parameters
+and/or initial states.  This requires storing the sensitivities as
+part of the result variables in a general (not ODE specific)
+precomputed-gradients \code{vari} structure.
+
+\subsection{System Function}
+
+Given an initial condition and a set of requested solution times, the
+\code{stan::agrad} library can integrate an ODE defined in terms of a
+system function.  The system function must be able to be instantiated
+by the following signature (where \code{vector} is \code{std::vector})
+%
+\begin{quote}
+\begin{Verbatim}
+vector<var>
+operator()(double t, 
+           const vector<double>& y,
+           const vector<var>& theta) const;
+\end{Verbatim}
+\end{quote}
+%
+The return value is the vector of time derivatives evaluated at time
+\code{t} and system state \code{y}, given parameters \code{theta},
+continuous and integer data \code{x} and \code{x\_int}, and an output
+stream \code{o} for messages.  The function must be constant.
+
+The simple harmonic oscillator could be implemented as the following
+structure.
+%
+\begin{quote}
+\begin{Verbatim}
+struct sho {
+  template <typename T>
+  vector<T> operator()(double t, 
+                       const vector<double>& y
+                       const vector<var>& theta) const
+    vector<T> dy_dt(2);
+    dy_dt[0] = y[1];
+    dy_dt[1] = -theta[0] * y[2];
+    return dy_dt;
+  }
+};
+\end{Verbatim}
+\end{quote}
+
+
+\subsection{Integration Function}
+
+The function provided by \code{stan::agrad} to compute solutions to
+ODEs and support sensitivity calculations through autodiff has the
+following signature.
+%
+\begin{quote}
+\begin{Verbatim}
+template <typename F, typename T1, typename T2>
+vector<vector<typename promote_args<T1,T2>::type> >
+integrate_ode(const F& f,
+              const std::vector<T1> y0,
+              const double t0,
+              const std::vector<double>& ts,
+              const std::vector<T2>& theta);
+\end{Verbatim}
+\end{quote}
+%
+The argument \code{f} is the system function, and it must be
+implemented with enough generality to allow autodiff with respect to
+the parameters and/or initial state.  The variable \code{y0} is the
+initial state and \code{t0} is the initial time (which may be
+different than 0); its scalar type parameter \code{T1} may be either
+\code{double} or \code{var}, with \code{var} being used to autodiff
+with respect to the initial state.  The vector \code{ts} is a set of
+solution times requested and must have elements greater than \code{t0}
+arranged in strictly ascending order.  The vector \code{theta} is for
+system parameters; its scalar type parameter \code{T2} can be either
+\code{double} or \code{var}, with \code{var} used to autodiff with
+respect to parameters.  There are two additional arguments, \code{x}
+and \code{x\_int}, used for real and double-valued data respectively.
+These are provided so that data does not need to be either hard coded
+in the system or promoted to \code{var} (which would add unnecessary
+components to the expression graph, increasing time and memory used).
+Finally, an output stream pointer can be provided for messages.
+
+Given the harmonic oscillator class \code{sho}, and initial values
+$(-1,0)$, the solutions for the harmonic oscillator at times $1{:}10$
+with parameter $\theta = 0.35$, initial state $y(0) = (-1,0)$, can be
+obtained in the usual way.
+%
+\begin{quote}
+\begin{Verbatim}
+double t0 = 0.0;   
+vector<double> ts;  
+for (int t = 1; t <= 10; ++t) ts.push_back(t);
+var theta = 0.35;
+vector<var> y0(2);  y[0] = 0;  y[1] = -1.0;
+vector<var> ys 
+  = integrate_ode(sho(), y0, t0, ts, theta);
+for (int i = 0; i < 2; ++i) {
+  if (i > 0) set_zero_all_adjoints();
+  y.grad();
+  for (int n = 0; n <= ys.size(); ++n) 
+    printf("y(%2d,%2d) = %5.2f\n", ts[n], i, ts[n][i])
+    printf("sens: theta=%5.2f y0(0)=%5.2f y0(1)=%5.2f\n",
+           theta.adj(), y0[0].adj(), y0[1].adj());
+  }
+}
+\end{Verbatim}
+\end{quote}
 
 
 
 
 
-\section{Code Review and Unit Tests}
+\section{Probability Functions}
 
-Every pull request to GitHub is made using 
-The code in \code{stan::agrad} is thoroughly unit tested using the
-Google unit test framework for C++ \citep{GoogleTest:2014}.
+
+\section{Software Process}
+
+\subsection{Version Control}
+
+The source for \code{agrad::rev} is managed with GitHub.  
+
+\subsection{Code Review via Pull Requests}
+ve
+Every change to the development branch of the code is formulated as a
+pull request for easy comparison with the existing code base.  
+
+\subsection{Unit Tests}
+
+Each pull request is unit tested against a large suite of unit tests.
+The continuous integration is managed through Jenkins, with testing
+for Mac and Windows.  Unit tests are implemented with the Google unit
+test framework for C++ \citep{GoogleTest:2014}.
 
 
 
@@ -2485,6 +2666,27 @@ defined so that
 \frac{\partial}{\partial x_{i,j}} f(x).
 \]
 
+\subsection{Chain Rule}
+
+The univariate form of the chain rule ensures that if $f,g:\reals
+\rightarrow \reals$ and $x \in \reals$, then 
+\[
+(f \circ g)'(x) = f'(g(x)) \, g'(x).
+\]
+The multivariate form for partial derivatives ensures that if
+$f:\reals^N \rightarrow \reals$, $g:\reals^M \rightarrow \reals^N$,
+and $x \in \reals^M$, then
+\[
+\nabla^{\top}\!(f \circ g) (x)
+= 
+  \left( \nabla^{\top} f \right)\!(g(x))
+  \times
+  J(g)
+\]
+where the product is of the transposed gradient of $f$ evaluated at
+$g(x)$ (a $1 \times N$ row vector) and the Jacobian of $g$ (an $N
+\times M$ matrix), producing the transpose of the gradient of $f \circ
+g$ (a $1 \times M$ vector).
 
 
 
@@ -2501,6 +2703,7 @@ defined so that
 
 \bibliographystyle{apalike}
 \bibliography{../../bibtex/all}
+
 
 
 \end{document}
