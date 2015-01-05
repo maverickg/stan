@@ -2,7 +2,6 @@
 #define STAN__AGRAD__FWD__OPERATORS__OPERATOR_EQUAL_HPP
 
 #include <stan/agrad/fwd/fvar.hpp>
-#include <stan/meta/traits.hpp>
 
 namespace stan {
 

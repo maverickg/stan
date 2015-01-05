@@ -12,97 +12,84 @@ namespace stan {
     template <typename T>
     struct fvar {
 
-      T val_;  // value
-      T d_;    // tangent (aka derivative)
+      double val_; 
+      T d_;   
 
-      T val() { return val_; }
-      T tangent() { return d_; }
+      double val() { 
+        return val_; 
+      }
+
+      T tangent() { 
+        return d_; 
+      }
 
       typedef fvar value_type;
 
-      // TV and TD must be assignable to T
-      template <typename TV, typename TD>
-      fvar(const TV& val, const TD& deriv) : val_(val), d_(deriv) { 
-        if (unlikely(boost::math::isnan(val)))
-          d_ = val;
-      }
+      fvar(double val, const T& d) 
+        : val_(val), 
+          d_(d) 
+      {  } 
 
-      // TV must be assignable to T
-      template <typename TV>
-      fvar(const TV& val) : val_(val), d_(0.0) {
-        if (unlikely(boost::math::isnan(val)))
-          d_ = val;
-      }
+      fvar(double val) 
+      : val_(val), 
+        d_(0.0)
+      {  }
       
-      fvar() : val_(0.0), d_(0.0) { }
+      fvar() 
+        : val_(0.0), 
+          d_(0.0)
+      { }
 
-      template <typename T2>
       inline
-      fvar<T>&
-      operator+=(const fvar<T2>& x2) {
+      fvar<T>& operator+=(const fvar<T>& x2) {
         val_ += x2.val_;
         d_ += x2.d_;
         return *this;
       }
-
-      template <typename T2>
       inline
-      fvar<T>&
-      operator+=(const T2& x2) {
+      fvar<T>& operator+=(double x2) {
         val_ += x2;
         return *this;
       }
 
-      template <typename T2>
       inline
-      fvar<T>&
-      operator-=(const fvar<T2>& x2) {
+      fvar<T>& operator-=(const fvar<T>& x2) {
         val_ -= x2.val_;
         d_ -= x2.d_;
         return *this;
       }
-
-      template <typename T2>
       inline
-      fvar<T>&
-      operator-=(const T2& x2) {
+      fvar<T>& operator-=(double x2) {
         val_ -= x2;
         return *this;
       }
 
-      template <typename T2>
       inline
-      fvar<T>&
-      operator*=(const fvar<T2>& x2) {
+      fvar<T>& operator*=(const fvar<T>& x2) {
         d_ = d_ * x2.val_ + val_ * x2.d_;
         val_ *= x2.val_;
         return *this;
       }
-
-      template <typename T2>
       inline
-      fvar<T>&
-      operator*=(const T2& x2) {
+      fvar<T>& operator*=(double x2) {
         val_ *= x2;
+        d_ *= x2;
         return *this;
       }
 
       // SPEEDUP: specialize for T2 == var with d_ function
 
-      template <typename T2>
       inline
-      fvar<T>&
-      operator/=(const fvar<T2>& x2) {
+      fvar<T>& operator/=(const fvar<T>& x2) {
         d_ = (d_ * x2.val_ - val_ * x2.d_) / ( x2.val_ * x2.val_);
         val_ /= x2.val_;
         return *this;
       }
-
-      template <typename T2>
       inline
       fvar<T>&
-      operator/=(const T2& x2) {
+      operator/=(double x2) {
         val_ /= x2;
+        d_ /= x2;
         return *this;
       }
 
@@ -114,30 +101,27 @@ namespace stan {
       }
 
       inline
-      fvar<T>
-      operator++(int /*dummy*/) {
+      fvar<T> operator++(int /*dummy*/) {
         fvar<T> result(val_,d_);
         ++val_;
         return result;
       }
 
       inline
-      fvar<T>&
-      operator--() {
+      fvar<T>& operator--() {
         --val_;
         return *this;
       }
+
       inline
-      fvar<T>
-      operator--(int /*dummy*/) {
+      fvar<T> operator--(int /*dummy*/) {
         fvar<T> result(val_,d_);
         --val_;
         return result;
       }
 
       friend
-      std::ostream& 
-      operator<<(std::ostream& os, const fvar<T>& v) {
+      std::ostream& operator<<(std::ostream& os, const fvar<T>& v) {
          return os << v.val_ << ':' << v.d_;
       }
     };

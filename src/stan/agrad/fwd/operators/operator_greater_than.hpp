@@ -2,7 +2,6 @@
 #define STAN__AGRAD__FWD__OPERATORS__OPERATOR__GREATER_THAN_HPP
 
 #include <stan/agrad/fwd/fvar.hpp>
-#include <stan/meta/traits.hpp>
 
 namespace stan {
 
@@ -28,6 +27,9 @@ namespace stan {
     operator>(double x, const fvar<T>& y) {
       return x > y.val_;
     }
+
   }
+
 }
+
 #endif
