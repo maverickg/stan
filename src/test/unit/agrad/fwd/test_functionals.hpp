@@ -3,11 +3,22 @@
 
 #include <gtest/gtest.h>
 #include <vector>
+#include <boost/math/special_functions/fpclassify.hpp>
 #include <stan/agrad/autodiff.hpp>
 
 namespace stan {
 
   namespace test {
+
+    inline double infinity() {
+      return std::numeric_limits<double>::infinity();
+    }
+    inline double neg_infinity() {
+      return -infinity();
+    }
+    inline double nan() {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
 
     template <typename F>
     struct unary_functor {
@@ -22,6 +33,8 @@ namespace stan {
         return f_(x(0));
       }
     };
+
+
     template <typename F>
     struct binary_functor {
       const F& f_;
@@ -51,6 +64,8 @@ namespace stan {
         return f_(x1_, x2);
       }
     };
+
+
     template <typename F>
     struct bind2of2 {
       const F& f_;
@@ -68,8 +83,33 @@ namespace stan {
 
 
 
+
+    void test_same(double x1, double x2, const std::string& msg) {
+      using boost::math::isnan;
+      if (isnan(x1))
+        EXPECT_TRUE(isnan(x2))
+          << "x1 is NaN, but x2=" << x2
+          << ";  " << msg;
+      else
+        EXPECT_FLOAT_EQ(x1,x2)
+          << "value from double equals rev"
+          << ";  " << msg;
+    }
+
+
     template <typename F>
-    void test_vector(const F& f, const Eigen::VectorXd& x) {
+    void test_vector_second_order(const F& f, const Eigen::VectorXd& x) {
+      using Eigen::VectorXd;
+      using Eigen::MatrixXd;
+      using stan::agrad::fvar;
+      using stan::agrad::gradient;
+      using stan::agrad::var;
+
+      
+    }
+
+    template <typename F>
+    void test_vector_first_order(const F& f, const Eigen::VectorXd& x) {
       using Eigen::VectorXd;
       using stan::agrad::fvar;
       using stan::agrad::gradient;
@@ -88,11 +128,8 @@ namespace stan {
       VectorXd grad_fx2;
       gradient<double,F>(f,x,fx2,grad_fx2);
       
-      EXPECT_FLOAT_EQ(fx,fx1)
-        << "value from double equals rev";
-
-      EXPECT_FLOAT_EQ(fx,fx2)
-        << "value from double equals fwd";
+      test_same(fx,fx1, "value from double equals rev");
+      test_same(fx,fx2, "value from double equals fwd");
 
       EXPECT_FLOAT_EQ(x.size(), grad_fx1.size())
         << "size of gradient in rev";
@@ -101,8 +138,14 @@ namespace stan {
         << "size of gradient in fwd";
       
       for (int i = 0; i < grad_fx1.size(); ++i)
-        EXPECT_FLOAT_EQ(grad_fx1(i), grad_fx2(i))
-          << "value of gradient in rev vs. fwd; index=" << i;
+        test_same(grad_fx1(i), grad_fx2(i), 
+                  "value of gradient in rev vs. fwd");
+    }
+
+    template <typename F>
+    void test_vector(const F& f, const Eigen::VectorXd& x) {
+      test_vector_first_order(f,x);
+      test_vector_second_order(f,x);
     }
 
     template <typename F>
@@ -111,7 +154,30 @@ namespace stan {
       x_vec << x;
       test_vector(unary_functor<F>(f),x_vec);
     }
-    
+
+    std::vector<double> limits_vector() {
+      std::vector<double> x;
+      x.push_back(neg_infinity());
+      x.push_back(-1);
+      x.push_back(0);
+      x.push_back(1);
+      x.push_back(infinity());
+      x.push_back(nan());
+      return x;
+    }
+
+// FIXME: LIMITS TESTS
+
+    template <typename F>
+    void test_unary_limits(const F& f) {
+      std::vector<double> lims = limits_vector();
+      // for (size_t i = 0; i < lims.size(); ++i)
+      // test_unary(f,lims[i]);
+    }
+
+
+
+
     template <typename F>
     void test_binary_vv(const F& f, double x1, double x2) {
       Eigen::VectorXd x_vec(2);
@@ -131,6 +197,7 @@ namespace stan {
       test_vector(unary_functor<bind1of2<F> >(bind1of2<F>(f,x1)), x2_vec);
     }
 
+
     template <typename F>
     void test_binary(const F& f, double x1, double x2) {
       test_binary_vv(f,x1,x2);
@@ -138,11 +205,29 @@ namespace stan {
       test_binary_dv(f,x1,x2);
     }
 
+// FIXME: LIMITS TEST
+
+    template <typename F>
+    void test_binary_limits(const F& f, double x1, double x2) {
+      std::vector<double> lims1 = limits_vector();
+      lims1.push_back(x1);
+
+      std::vector<double> lims2 = limits_vector();
+      lims1.push_back(x2);
+
+      // for (size_t i = 0; i < lims1.size(); ++i)
+      // for (size_t j = 0; j < lims2.size(); ++j)
+      // test_binary(f, lims1[i], lims2[j]);
+    }
+
+
     template <typename F>
     void test_binary_op_eq(const F& f, double x1, double x2) {
       test_binary_vv(f,x1,x2);
       test_binary_vd(f,x1,x2);
     }
+
+
 
     template <typename F>
     void test_binary_relation(const F&f, double x1, double x2) {

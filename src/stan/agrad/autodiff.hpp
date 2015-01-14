@@ -188,35 +188,34 @@ namespace stan {
     // }
       
 
-    // // time O(N^2);  space O(N^2)
-    // template <typename F>
-    // void
-    // hessian(const F& f,
-    //         const Eigen::Matrix<double,Eigen::Dynamic,1>& x,
-    //         double& fx,
-    //         Eigen::Matrix<double,Eigen::Dynamic,1>& grad,
-    //         Eigen::Matrix<double,Eigen::Dynamic,Eigen::Dynamic>& H) {
-    //   start_nested();
-    //   try {
-    //     H.resize(x.size(), x.size());
-    //     grad.resize(x.size());
-    //     for (int i = 0; i < x.size(); ++i) {
-    //       Eigen::Matrix<fvar<var>, Eigen::Dynamic, 1> x_fvar(x.size());
-    //       for (int j = 0; j < x.size(); ++j) 
-    //         x_fvar(j) = fvar<var>(x(j),i==j);
-    //       fvar<var> fx_fvar = f(x_fvar);
-    //       grad(i) = fx_fvar.d_.val();
-    //       if (i == 0) fx = fx_fvar.val_.val();
-    //       stan::agrad::grad(fx_fvar.d_.vi_);
-    //       for (int j = 0; j < x.size(); ++j)
-    //         H(i,j) = x_fvar(j).val_.adj();
-    //     }
-    //   } catch (const std::exception& e) {
-    //     stan::agrad::recover_memory_nested();
-    //     throw;
-    //   }
-    //   stan::agrad::recover_memory_nested();
-    // }
+    // time O(N^2);  space O(N^2)
+    template <typename F>
+    void
+    hessian(const F& f,
+            const Eigen::Matrix<double,Eigen::Dynamic,1>& x,
+            double& fx,
+            Eigen::Matrix<double,Eigen::Dynamic,1>& grad,
+            Eigen::Matrix<double,Eigen::Dynamic,Eigen::Dynamic>& H) {
+      start_nested();
+      try {
+        H.resize(x.size(), x.size());
+        grad.resize(x.size());
+        for (int i = 0; i < x.size(); ++i) {
+          Eigen::Matrix<fvar<var>, Eigen::Dynamic, 1> x_fvar(x.size());
+          for (int j = 0; j < x.size(); ++j) 
+            x_fvar(j) = fvar<var>(x(j),i==j);
+          fvar<var> fx_fvar = f(x_fvar);
+          grad(i) = fx_fvar.d_.val();
+          if (i == 0) fx = fx_fvar.val();
+y          for (int j = 0; j < x.size(); ++j)
+            H(i,j) = x_fvar(j).val_.adj();
+        }
+      } catch (const std::exception& e) {
+        stan::agrad::recover_memory_nested();
+        throw;
+      }
+      stan::agrad::recover_memory_nested();
+    }
 
     // // *** WARNING***
     // // need to specialize to T = fvar<T2> or T = var to pull out

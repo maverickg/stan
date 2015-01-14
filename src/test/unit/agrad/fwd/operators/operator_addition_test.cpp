@@ -12,7 +12,12 @@ struct op_add_functor {
 
 TEST(AgradFwdOperatorAddition, All) {
   using stan::test::test_binary;
-  test_binary(op_add_functor(), 0.3, 9.7);
-  test_binary(op_add_functor(), -12.2, 15.0);
+  using stan::test::test_binary_limits;
+
+  op_add_functor f;
+  test_binary(f, 0.3, 9.7);
+  test_binary(f, -12.2, 15.0);
+
+  test_binary_limits(f, 0.3, 9.7);
 }
 
