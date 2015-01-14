@@ -353,7 +353,7 @@ original function's subexpressions.
 
 
 \section{Calculating Gradients and Jacobians with \code{\bfseries
-    stan::agrad}}
+    stan::agrad}}\label{calc-gradients.section}
 
 Reverse-mode automatic differentiation in \code{stan::agrad} can be
 used to evaluate gradients of functions from $\reals^N$ to $\reals$ or
@@ -2552,8 +2552,141 @@ for (int i = 0; i < 2; ++i) {
 
 
 
-\section{Probability Functions}
+\section{Probability Functions and Traits}\label{probability-functions.section}\label{traits.section}
 
+The primary application for which \code{stan::agrad} was developed is
+fitting statistical models, with optimization for maximum likelihood
+estimates and Markov chain Monte Carlo (MCMC) for Bayesian posterior
+sampling.  For optimization, gradient descent and quasi-Newton methods
+both depend on being able to calculate derivatives of the objective
+function (in the primary application, a (penalized) log likelihood or
+Bayesian posterior).  For MCMC, Hamiltonian Monte Carlo (HMC) requires
+gradients in the leapfrog integrator it uses to solve the Hamiltonian
+equations and thus simulate an efficient flow around the posterior.
+
+In both of these applications, probability functions need only be
+calculated up to a constant term.  In order to do this efficiently and
+automatically, \code{stan::agrad} uses traits-based metaprogramming
+and template parameters to configure its log probability functions.
+For example, consider the log normal density again
+\[
+\log \distro{Normal}(y | \mu, \sigma)
+= -\log \left( 2 \pi \right)
+  - \log \sigma
+  - \frac{1}{2} \left( \frac{y - \mu}{\sigma} \right)^2.
+\]
+%
+
+In all cases, the first term, $-\log \left( 2 \pi \right)$ can be
+dropped because it's constant.  If $\sigma$ is a constant, then the
+second term can be dropped as well.  The final term must be preserved
+unless all of the arguments, $y$, $\mu$, and $\sigma$, are constants.  
+
+For maximum generality, each log probability function has a leading
+boolean template argument \code{propto}, which will have a true value
+if the calculation is being done up to a proportion and a false value
+otherwise.  Each of the remaining arguments is templated out
+separately, to allow all eight combinations of constants and variables
+as arguments.  The return type is the promotion of the argument
+types.  The fully specified signature is
+%
+\begin{quote}
+\begin{Verbatim}
+template <bool propto, typename T1, typename T2, typename T3>
+typename return_type<T1,T2,T3>::type
+normal_log(const T1& y, const T2& mu, const T3& sigma) {
+  ...
+\end{Verbatim}
+\end{quote}
+%
+For scalar arguments, the \code{return\_type} traits metaprogram has
+the same behavior as Boost's \code{promote\_args}; generalizations to
+container arguments such as vectors and arrays will be discussed in
+\refsection{vectorization}.
+
+Without going into the details of error handling, the body of the
+function uses a further metaprogram to decide which terms to include
+in the result.  Roughly speaking, and not considering generalizations
+to containers and special \code{vari} types to hold analytic gradient
+calculations (see \refsection{vectorization}), the body of the
+function behaves roughly as follows:
+%
+\begin{quote}
+\begin{Verbatim}
+  include stan::math::square;
+  include std::log;
+  typename return_type<T1,T2,T3>::type lp = 0;
+  if (include_summand<propto>::value)
+    lp += NEGATIVE_LOG_2_PI;
+  if (include_summand<propto,T3>::value)
+    lp -= log(sigma);
+  if (include_summand<propto,T1,T2,T3>::value)
+    lp -= 0.5 * square((y - mu) / sigma);
+  return lp;
+}
+\end{Verbatim}
+\end{quote}
+%
+The \code{include\_summand} traits metaprogram is quite simple,
+defining an enum with a true value if any of the types is not
+primitive (integer or floating point).  Although it allows up to 10
+arguments and supports container types, the following implementation
+of \code{include\_summand} suffices for the current example.
+%
+\begin{quote}
+\begin{Verbatim}
+template <boolean propto,
+          typename T1 = double, 
+          typename T2 = double, 
+          typename T3 = double>
+struct include_summand {
+  enum { value  = !propto  
+                  || !is_constant<T1>::value
+                  || !is_constant<T2>::value
+                  || !is_constant<T3>::value;  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The template specification requires a boolean \code{propto} template
+parameter, which is true if calculations are to be done up to a
+constant multiplier.  The remaining template typename parameters have
+default values of \code{double}, which are taken to be constants.  The
+structure defines a single enum \code{value}, the value of which will
+be true if the \code{propto} is false or if any of the remaining
+template parameters are not constant values.  For scalar types,
+\code{is\_constant} behaves just as Boost's TypeTraits library
+\code{is\_arithmetic} trait metaprogram; it is extended for container
+types as described in \refsection{vectorization}.
+
+
+\section{Vectorization of Reductions}\label{vectorization.section}
+
+The \code{stan::agrad} library was developed to facilitate
+probabilistic modeling and inference by making it easy to define
+density functions on the log scale with derivative support.  A common
+use case in that setting is modeling a sequence of independent
+observations $y_1,\ldots,y_N$ from some parametric likelihood function
+$p(y_n|\theta)$ with shared parameters $\theta$.  In this case, the
+joint likelihood function for all the observations is
+\[
+p(y_1,\ldots,y_N|\theta) = \prod_{n=1}^N p(y_n|\theta),
+\]
+or on the log scale,
+\[
+\log p(y_1,\ldots,y_N|\theta) = \sum_{n=1}^N \log p(y_n|\theta).
+\]
+Thus the joint log likelihood is just the sum of the contributions for
+the observations $y_n$.  For example, consider a 
+
+ the
+implementation of probability densities on the log scale, a primary
+operation for which is summation of contributions from different
+
+
+
+Continuing with the example of the normal probability density function
+introduced in \refsection{probability-functions}, 
 
 \section{Software Process}
 
