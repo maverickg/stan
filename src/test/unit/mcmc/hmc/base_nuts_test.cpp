@@ -22,7 +22,7 @@ namespace stan {
       
       mock_nuts(mock_model &m, rng_t& rng, std::ostream* o, std::ostream* e)
         : base_nuts<mock_model,ps_point,mock_hamiltonian,mock_integrator,rng_t>(m, rng, o, e)
-      { this->_name = "Mock NUTS"; }
+      { this->name_ = "Mock NUTS"; }
       
     private:
       
@@ -50,15 +50,15 @@ namespace stan {
       double phi(ps_point& z) { return this->V(z); }
       
       const Eigen::VectorXd dtau_dq(ps_point& z) {
-        return Eigen::VectorXd::Zero(this->_model.num_params_r());
+        return Eigen::VectorXd::Zero(this->model_.num_params_r());
       }
       
       const Eigen::VectorXd dtau_dp(ps_point& z) {
-        return Eigen::VectorXd::Zero(this->_model.num_params_r());
+        return Eigen::VectorXd::Zero(this->model_.num_params_r());
       }
       
       const Eigen::VectorXd dphi_dq(ps_point& z) {
-        return Eigen::VectorXd::Zero(this->_model.num_params_r());
+        return Eigen::VectorXd::Zero(this->model_.num_params_r());
       }
       
       void init(ps_point& z) { z.V = 0; }
@@ -81,7 +81,7 @@ namespace stan {
       
       divergent_nuts(mock_model &m, rng_t& rng, std::ostream* o, std::ostream* e):
         base_nuts<mock_model, ps_point, divergent_hamiltonian, expl_leapfrog,rng_t>(m, rng, o, e)
-      { this->_name = "Divergent NUTS"; }
+      { this->name_ = "Divergent NUTS"; }
       
     private:
       
@@ -103,9 +103,10 @@ TEST(McmcBaseNuts, set_max_depth) {
   q(0) = 5;
   q(1) = 1;
   
+  std::stringstream output, error;
+
   stan::mcmc::mock_model model(q.size());
-  
-  stan::mcmc::mock_nuts sampler(model, base_rng, &std::cout, &std::cerr);
+  stan::mcmc::mock_nuts sampler(model, base_rng, &output, &error);
   
   int old_max_depth = 1;
   sampler.set_max_depth(old_max_depth);
@@ -114,25 +115,28 @@ TEST(McmcBaseNuts, set_max_depth) {
   sampler.set_max_depth(-1);
   EXPECT_EQ(old_max_depth, sampler.get_max_depth());
   
+  EXPECT_EQ("", output.str());
+  EXPECT_EQ("", error.str());
 }
 
 
-TEST(McmcBaseNuts, set_max_delta) {
-  
+TEST(McmcBaseNuts, set_max_delta) {  
   rng_t base_rng(0);
   
   Eigen::VectorXd q(2);
   q(0) = 5;
   q(1) = 1;
   
+  std::stringstream output, error;
   stan::mcmc::mock_model model(q.size());
-  
-  stan::mcmc::mock_nuts sampler(model, base_rng, &std::cout, &std::cerr);
+  stan::mcmc::mock_nuts sampler(model, base_rng, &output, &error);
   
   double old_max_delta = 10;
   sampler.set_max_delta(old_max_delta);
   EXPECT_EQ(old_max_delta, sampler.get_max_delta());
-  
+
+  EXPECT_EQ("", output.str());
+  EXPECT_EQ("", error.str());  
 }
 
 TEST(McmcBaseNuts, build_tree) {
@@ -157,8 +161,9 @@ TEST(McmcBaseNuts, build_tree) {
   util.n_tree = 0;
   util.sum_prob = 0;
   
+  std::stringstream output, error;
   stan::mcmc::mock_model model(model_size);
-  stan::mcmc::mock_nuts sampler(model, base_rng, &std::cout, &std::cerr);
+  stan::mcmc::mock_nuts sampler(model, base_rng, &output, &error);
   
   sampler.set_nominal_stepsize(1);
   sampler.set_stepsize_jitter(0);
@@ -179,7 +184,9 @@ TEST(McmcBaseNuts, build_tree) {
   
   EXPECT_EQ(8 * init_momentum, sampler.z().q(0));
   EXPECT_EQ(init_momentum, sampler.z().p(0));
-  
+
+  EXPECT_EQ("", output.str());
+  EXPECT_EQ("", error.str());  
 }
 
 TEST(McmcBaseNuts, slice_criterion) {
@@ -204,8 +211,9 @@ TEST(McmcBaseNuts, slice_criterion) {
   util.n_tree = 0;
   util.sum_prob = 0;
   
+  std::stringstream output, error;
   stan::mcmc::mock_model model(model_size);
-  stan::mcmc::divergent_nuts sampler(model, base_rng, &std::cout, &std::cerr);
+  stan::mcmc::divergent_nuts sampler(model, base_rng, &output, &error);
   
   sampler.set_nominal_stepsize(1);
   sampler.set_stepsize_jitter(0);
@@ -218,18 +226,20 @@ TEST(McmcBaseNuts, slice_criterion) {
   n_valid = sampler.build_tree(0, rho, &z_init, z_propose, util);
   
   EXPECT_EQ(1, n_valid);
-  EXPECT_EQ(0, sampler._n_divergent);
+  EXPECT_EQ(0, sampler.n_divergent_);
   
   sampler.z().V = -250;
   n_valid = sampler.build_tree(0, rho, &z_init, z_propose, util);
   
   EXPECT_EQ(0, n_valid);
-  EXPECT_EQ(0, sampler._n_divergent);
+  EXPECT_EQ(0, sampler.n_divergent_);
   
   sampler.z().V = 750;
   n_valid = sampler.build_tree(0, rho, &z_init, z_propose, util);
   
   EXPECT_EQ(0, n_valid);
-  EXPECT_EQ(1, sampler._n_divergent);
-  
+  EXPECT_EQ(1, sampler.n_divergent_);
+
+  EXPECT_EQ("", output.str());
+  EXPECT_EQ("", error.str());  
 }

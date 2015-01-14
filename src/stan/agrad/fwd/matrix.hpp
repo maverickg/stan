@@ -1,5 +1,5 @@
-#ifndef __STAN__AGRAD__FWD__MATRIX_HPP__
-#define __STAN__AGRAD__FWD__MATRIX_HPP__
+#ifndef STAN__AGRAD__FWD__MATRIX_HPP
+#define STAN__AGRAD__FWD__MATRIX_HPP
 
 #include <stan/agrad/fwd/matrix/columns_dot_product.hpp>
 #include <stan/agrad/fwd/matrix/columns_dot_self.hpp>
@@ -13,6 +13,7 @@
 #include <stan/agrad/fwd/matrix/log_softmax.hpp>
 #include <stan/agrad/fwd/matrix/log_sum_exp.hpp>
 #include <stan/agrad/fwd/matrix/mdivide_left.hpp>
+#include <stan/agrad/fwd/matrix/mdivide_left_ldlt.hpp>
 #include <stan/agrad/fwd/matrix/mdivide_left_tri_low.hpp>
 #include <stan/agrad/fwd/matrix/mdivide_right.hpp>
 #include <stan/agrad/fwd/matrix/mdivide_right_tri_low.hpp>
@@ -26,6 +27,8 @@
 #include <stan/agrad/fwd/matrix/sort.hpp>
 #include <stan/agrad/fwd/matrix/sum.hpp>
 #include <stan/agrad/fwd/matrix/tcrossprod.hpp>
+#include <stan/agrad/fwd/matrix/trace_quad_form.hpp>
+#include <stan/agrad/fwd/matrix/trace_gen_quad_form.hpp>
 #include <stan/agrad/fwd/matrix/to_fvar.hpp>
 #include <stan/agrad/fwd/matrix/typedefs.hpp>
 

@@ -1,6 +1,6 @@
 #include <stan/common/command.hpp>
 #include <gtest/gtest.h>
-#include <test/test-models/no-main/common/test_lp.cpp>
+#include <test/test-models/good/common/test_lp.hpp>
 
 typedef test_lp_model_namespace::test_lp_model Model;
 typedef boost::ecuyer1988 rng_t;
@@ -13,10 +13,13 @@ public:
     stan::io::dump empty_data_context(empty_data_stream);
     empty_data_stream.close();
     
-    model = new Model(empty_data_context, &std::cout);
+    model_output.str("");
+    model = new Model(empty_data_context, &model_output);
     base_rng.seed(123456);
     
-    sampler_ptr = new sampler((*model), base_rng, &std::cout, &std::cout);
+    output.str("");
+    error.str("");
+    sampler_ptr = new sampler((*model), base_rng, &output, &error);
     sampler_ptr->set_nominal_stepsize(1);
     sampler_ptr->set_stepsize_jitter(0);
     sampler_ptr->set_max_depth(10);
@@ -43,6 +46,8 @@ public:
   double delta, gamma, kappa, t0;
   Eigen::VectorXd z_0;
   Eigen::VectorXd z_init;
+
+  std::stringstream model_output, output, error;
 };
 
 TEST_F(UiCommand, init_adapt_z_0) {
@@ -54,6 +59,10 @@ TEST_F(UiCommand, init_adapt_z_0) {
   for (size_t n = 0; n < model->num_params_r(); n++) {
     EXPECT_FLOAT_EQ(z_0[n], sampler_ptr->z().q[n]);
   }
+
+  EXPECT_EQ("", model_output.str());
+  EXPECT_EQ("", output.str());
+  EXPECT_EQ("", error.str());
 }
 
 
@@ -65,4 +74,8 @@ TEST_F(UiCommand, init_adapt_z_init) {
   for (size_t n = 0; n < model->num_params_r(); n++) {
     EXPECT_FLOAT_EQ(z_init[n], sampler_ptr->z().q[n]);
   }
+
+  EXPECT_EQ("", model_output.str());
+  EXPECT_EQ("", output.str());
+  EXPECT_EQ("", error.str());
 }
