@@ -122,7 +122,14 @@ and its gradient evaluated a point
     (y - \mu)^2 \sigma^{-3} - \sigma^{-1}
   \right]
 \end{equation}
-
+%
+In this example, the gradient with respect to all of $y$, $\mu$, and
+$\sigma$ are calculated.  It is common in statistical models for some
+variables to be observed outcomes or fixed prior parameters and thus
+constant.  Constants need not enter into derivative calculations as
+nodes, allowing substantial reduction in both memory and time used for
+gradient calculations.  See \refsection{} for an example of how the
+treatment of constants differs from that of autodiff variables.
 
 \newcommand{\gmnode}[3]{\put(#1,#2){\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
 \newcommand{\gmnodeobs}[3]{\put(#1,#2){\color{yellow}\circle*{20}}\put(#1,#2){\color{black}\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
@@ -275,9 +282,10 @@ a_{1} & {+}{=} & a_4 \times (1) & a_1 = -v_5 / v_3
 a_{2} & {+}{=} & a_4 \times (-1) & a_2 = v_5 / v_3
 \end{array}
 \]
-\mycaption{autodiff-stack}{In the reverse pass, the stack is
-  traversed from the final output down to the inputs, and as each
-  variable is visited, each of its operands is updated with the
+\mycaption{autodiff-stack}{The variables $v_i$ represent values and
+  $a_i$ represent corresponding adjoints.  In the reverse pass, the
+  stack is traversed from the final output down to the inputs, and as
+  each variable is visited, each of its operands is updated with the
   variable's adjoint times the partial with respect to the operand.
   After the reverse pass finishes, $(a_1,a_2,a_3)$ is the gradient of
   the density function evaluated at $(y,\mu,\sigma)$, which matches
@@ -2676,35 +2684,153 @@ or on the log scale,
 \[
 \log p(y_1,\ldots,y_N|\theta) = \sum_{n=1}^N \log p(y_n|\theta).
 \]
-Thus the joint log likelihood is just the sum of the contributions for
-the observations $y_n$.  For example, consider a 
+Thus the log joint likelihood is just the sum of the log likelihoods
+for the observations $y_n$.
 
- the
-implementation of probability densities on the log scale, a primary
-operation for which is summation of contributions from different
+\subsection{Argument Broadcasting}
+
+The normal log density function takes three arguments, the variate or
+outcome along with a location (mean) and scale (standard deviation)
+parameter.  Without vectorization, each of these arguments would be
+allowed to be a scalar of type \code{int}, \code{double}, or
+\code{agrad::var}.  
+
+With vectorization, each argument may also be a standard library
+vector, \code{vector<T>}, an Eigen matrix, \code{Matrix<T,Dynamic,1>},
+or an Eigen row matrix, \code{Matrix<T,1,Dynamic>}, where \code{T} is
+any of the scalar types.  All container arguments must be the same
+size, and any scalar arguments are broadcast to behave as if they were
+containers with the scalar in every position.
+
+\subsection{Vector View Expression Template}
+
+Rather than implement 27 different versions of the normal log density,
+\code{stan::agrad} introduces an expression template allowing any of
+the types to be treated as a vector-like container holding its
+contents.  The view provides a scalar typedef, a size, and an operator
+to access elements using bracket notation.  Underlyingly, it stores a
+pointer, which will in practice be to a single element or to an array.
+Simplifying a bit, the code is as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+template <typename T,
+          bool is_array = stan::is_vector_like<T>::value>
+class VectorView {
+public: 
+  typedef typename scalar_type<T>::type scalar_t;
+
+  VectorView(scalar_t& c) : x_(&c) { }
+
+  VectorView(std::vector<scalar_t>& v) : x_(&v[0]) { }
+
+  template <int R, int C>
+  VectorView(Eigen::Matrix<scalar_t,R,C>& m) : x_(&m(0)) { }
+
+  VectorView(scalar_t* x) : x_(x) { }
+
+  scalar_t& operator[](int i) {
+    if (is_array) return x_[i];
+    else return x_[0]; 
+  }
+private:
+  scalar_t* x_;
+};
+\end{Verbatim}
+\end{quote}
+%
+There are two template parameters, \code{T} being the type of object
+being viewed and \code{is\_array} being true if the object being
+viewed is to be treated like a vector when accessing members. The
+second argument can always be set by default; it acts as a typedef to
+enable a simpler definition of \code{operator[]}.  The traits
+metaprogram \code{is\_vector\_like<T>::value} determines if the viewed
+type \code{T} acts like a container.
+
+The typedef \code{scalar\_t} uses the metaprogram
+\code{scalar\_type<T>::type} to calculate the underlying scalar type
+for the viewed type \code{T}.  
+
+The constructor takes either a scalar reference, a standard vector, or
+an Eigen matrix and stores either a pointer to the scalar or the first
+element of an array in private member variabe \code{x\_}.
+
+There is a single member function, \code{operator[]}, which defines
+how the view returns elements for a given index \code{i}.  If the
+viewed type is a container as defined by template parameter
+\code{is\_array}, then it returns the element at index \code{i}; if it
+is a scalar type, then the value is returned (\code{x\_[0]} is
+equivalent to \code{*x\_}).
+
+Once a view is constructed, its \code{operator[]} can be used just
+like any other container.   This pattern would be easy to extend to
+further containers, such as Boost sequences.  After this code is
+executed, 
+%
+\begin{quote}
+\begin{Verbatim}
+vector<var> y(3); ...
+VectorView<vector<var> > y_vw(y);
+\end{Verbatim}
+\end{quote}
+%
+the value of \code{y\_vw[i]} tracks \code{y[i]}, and
+\code{y\_vw::scalar\_t} is \code{var}.  
+
+For a scalar, the construction is similar.  After this code is
+executed,
+%
+\begin{quote}
+\begin{Verbatim}
+double z;
+VectorView<double> z_vw(z);
+\end{Verbatim}
+\end{quote}
+%
+the value of \code{z\_vw[i]} tracks the value of \code{z} no matter
+what \code{i} is---the index is simply ignored.  
+
+No copy is made of the contents of \code{y} and it is up to the
+constructor of \code{VectorView} to ensure that the content of
+\code{y} do not change, for instance by resizing.  Furthermore, a
+non-constant reference is returned by the \code{operator[]}, meaning
+that clients of the view can change the contained object that is being
+viewed.  This is all standard in such a view pattern, an example of
+which is the \code{block}, \code{head}, and \code{tail} functions in
+Eigen, which provide mutable views of matrices or vectors.
+
+\subsection{Vector Builder Generic Container}
+
+By itself, the vector view does not provide a way to generate
+intermediate quantities needed in calculations and store them in an
+efficient way.  
 
 
+\subsection{Normal Density Example}
 
 Continuing with the example of the normal probability density function
 introduced in \refsection{probability-functions}, 
 
-\section{Software Process}
 
-\subsection{Version Control}
 
-The source for \code{agrad::rev} is managed with GitHub.  
 
-\subsection{Code Review via Pull Requests}
-ve
-Every change to the development branch of the code is formulated as a
-pull request for easy comparison with the existing code base.  
+% \section{Software Process}
 
-\subsection{Unit Tests}
+% \subsection{Version Control}
 
-Each pull request is unit tested against a large suite of unit tests.
-The continuous integration is managed through Jenkins, with testing
-for Mac and Windows.  Unit tests are implemented with the Google unit
-test framework for C++ \citep{GoogleTest:2014}.
+% The source for \code{agrad::rev} is managed with GitHub.  
+
+% \subsection{Code Review via Pull Requests}
+% ve
+% Every change to the development branch of the code is formulated as a
+% pull request for easy comparison with the existing code base.  
+
+% \subsection{Unit Tests}
+
+% Each pull request is unit tested against a large suite of unit tests.
+% The continuous integration is managed through Jenkins, with testing
+% for Mac and Windows.  Unit tests are implemented with the Google unit
+% test framework for C++ \citep{GoogleTest:2014}.
 
 
 
