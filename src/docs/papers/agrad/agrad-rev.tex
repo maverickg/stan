@@ -128,8 +128,9 @@ $\sigma$ are calculated.  It is common in statistical models for some
 variables to be observed outcomes or fixed prior parameters and thus
 constant.  Constants need not enter into derivative calculations as
 nodes, allowing substantial reduction in both memory and time used for
-gradient calculations.  See \refsection{} for an example of how the
-treatment of constants differs from that of autodiff variables.
+gradient calculations.  See \refsection{calc-gradients} for an example
+of how the treatment of constants differs from that of autodiff
+variables.
 
 \newcommand{\gmnode}[3]{\put(#1,#2){\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
 \newcommand{\gmnodeobs}[3]{\put(#1,#2){\color{yellow}\circle*{20}}\put(#1,#2){\color{black}\circle{20}}\put(#1,#2){\makebox(0,0){$#3$}}}
@@ -2702,7 +2703,7 @@ any of the scalar types.  All container arguments must be the same
 size, and any scalar arguments are broadcast to behave as if they were
 containers with the scalar in every position.
 
-\subsection{Vector View Expression Template}
+\subsection{Vector Views}
 
 Rather than implement 27 different versions of the normal log density,
 \code{stan::agrad} introduces an expression template allowing any of
@@ -2799,20 +2800,474 @@ viewed.  This is all standard in such a view pattern, an example of
 which is the \code{block}, \code{head}, and \code{tail} functions in
 Eigen, which provide mutable views of matrices or vectors.
 
+\subsection{Value Extractor}
+
+The helper function \code{value\_of} is defined to extract the
+\code{double}-based value of either an autodiff variable or a
+primitive value.  The definition for primitive types is in the
+\code{stan::math} namespace.
+%
+\begin{quote}
+\begin{Verbatim}
+template <typename T>
+inline double value_of(const T x) {
+  return static_cast<double>(x);
+}
+\end{Verbatim}
+\end{quote}
+%
+The function is overloaded for autodiff variables.
+%
+\begin{quote}
+\begin{Verbatim}
+inline double value_of(const var& v) {
+  return v.vi_->val_;
+}
+\end{Verbatim}
+\end{quote}
+%
+The definition for autodiff variables is in the \code{stan::agrad}
+namespace to allow argument-dependent lookup.
+
+It is crucial for many of the templated definitions to be able to pull
+out \code{double} values no matter what the type of argument is.  
+The function \code{value\_of} allows
+%
+\begin{quote}
+\begin{Verbatim}
+T x;
+double x_d = value_of(x);
+\end{Verbatim}
+\end{quote}
+%
+with \code{T} instantiated to \code{agrad::var}, \code{double}, or
+\code{int}.  
+
 \subsection{Vector Builder Generic Container}
 
 By itself, the vector view does not provide a way to generate
 intermediate quantities needed in calculations and store them in an
-efficient way.  
+efficient way.  For the normal density, if $\sigma$ is a single value,
+then $\log \sigma$ and $\sigma^{-1}$ can be computed once and reused.
 
+The class \code{VectorBuilder} is used as a container for intermediate
+values.  In the following code, from the normal density, it is used as
+the type of intermediate containers for $\sigma^{-1}$ and $\log
+\sigma$.%
+%
+\footnote{Stan's version of these functions is slightly more
+  complicated in that they also support forward-mode autodiff.  The
+  details of return type manipulation for forward-mode is sidestepped
+  here by dropping template parameters and their helper template
+  metaprograms and fixing types as \code{double}.}
+%
+\begin{quote}
+\begin{Verbatim}
+VectorBuilder<true> inv_sigma(length(sigma));
 
-\subsection{Normal Density Example}
+VectorBuilder<include_summand<propto,T_scale>::value>
+  log_sigma(length(sigma));
+\end{Verbatim}
+\end{quote}
+%
+The template parameter indicates whether the variable needs to be
+stored or not.  If the parameter is false, no storage will be
+allocated.  The intermediate value \code{inv\_sigma} is always
+computed because it will be needed for the normal density even if no
+derivatives are taken.  The interemediate value \code{log\_sigma}, on
+the other hand, is only computed and memory is only allocated for it
+if a term only involving a type \code{T\_scale} is included; see
+\refsection{probability-functions} for the definition of
+\code{include\_summand}.
+
+The code for \code{VectorBuilder} itself is relatively straightforward
+%
+\begin{quote}
+\begin{Verbatim}
+template <bool used, typename T1, 
+          typename T2=double, typename T3=double>
+struct VectorBuilder {
+  VectorBuilderHelper<used,
+                      contains_vector<T1,T2,T3>::value> a_;
+
+  VectorBuilder(size_t n) : a_(n) { }
+
+  T1& operator[](size_t i) { return a_[i]; }
+};
+\end{Verbatim}
+\end{quote}
+%
+The template struct \code{VectorBuilderHelper} provides the type of
+the value \code{a}; it is passed a boolean template parameter
+indicating whether any of the types is a vector and thus requires a
+vector rather than scalar to be allocated for storage.  The constructor for
+\code{VectorBuilder} just passes the requested size to the helper's
+constructor.  This will either construct a container of the requested
+size or return a dummy, depending on the value of the template
+parameter \code{used}.  The definition of \code{operator[]} just
+returns the value at index \code{i} from the helper.
+
+There are three use cases for efficiency for the vector.  The simplest
+is the dummy, which is employed when \code{used} is false.  It also
+defines the primary template structure.
+%
+\begin{quote}
+\begin{Verbatim}
+template <bool used, bool is_vec>
+struct VectorBuilderHelper {
+  VectorBuilderHelper(size_t /* n */) { }
+
+  double& operator[](size_t /* i */) {
+    throw std::logic_error("used is false.");
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The two template parameters are booleans indicating whether the
+storage is used, and if it is used, whether it is a vector or not.
+For the base case, there is no allocation.  Because there are no
+virtual functions declared, the size of \code{VectorBuilderHelper} is
+zero bytes and it can be optimized out of the definition of
+\code{VectorBuilder}.  The definition of the operator raises a
+standard library logic error because it should never be called;  it is
+only defined because it is required to be so that it can be used in
+alternation with helper implementations that do return values.
+
+For the case where \code{used} is true but \code{is\_vec} is false,
+the following specialization stores a \code{double} value.
+%
+\begin{quote}
+\begin{Verbatim}
+template <>
+struct VectorBuilderHelper<true,false> {
+  double x_;
+
+  VectorBuilderHelper(size_t /* n */) : x_(0.0) { }
+
+  T1& operator[](size_t /* i */) {
+    return x_;
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+Note that like \code{VectorView}, it returns the value \code{x\_} no
+matter what index is provided.
+
+For the case where \code{used} is true and \code{is\_vec} is true, a
+standard library vector is used to store values, allocating the memory
+in the constructor.
+%
+\begin{quote}
+\begin{Verbatim}
+template <>
+struct VectorBuilderHelper<true,true> {
+  std::vector<T1> x_;
+
+  VectorBuilderHelper(size_t n) : x_(n) { }
+
+  T1& operator[](size_t i) {
+    return x_[i];
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+Instances only live on the C++ stack, so the memory is managed
+implicitly when instances of \code{VectorBuilder} go out of scope.
+
+\subsection{Operands and Partials}
+
+The last piece of the puzzle in defining flexible functions for
+automatic differentiation is a general purpose structure
+\code{operands\_and\_partials}.  The key to this structure is that it
+stores the operands to a function or operator as an array of
+\code{vari} and stores the partial of the result with respect to the
+operand in a parallel array of \code{double} values.  A simplified
+definition is as follows.%
+%
+\footnote{As with other aspects of the probability functions, the
+  implementation in Stan is more general, allowing for forward-mode
+  autodiff variables of varying order as well as reverse-mode autodiff
+  variables and primitives.  It also allows more or fewer template
+  parameters, giving all but the first default \code{double} values.}
+%
+\begin{quote}
+\begin{Verbatim}
+template <typename T1, typename T2, typename T3>
+struct OperandsAndPartials {
+  size_t n_;
+  vari** ops_;
+  double* partials_;
+  VectorView<is_vector<T1>::value, 
+             is_constant_struct<T1>::value> d_x1_;
+  VectorView<is_vector<T2>::value, 
+             is_constant_struct<T2>::value> d_x2_;
+  VectorView<is_vector<T3>::value, 
+             is_constant_struct<T3>::value> d_x3_;
+  ...
+};
+\end{Verbatim}
+\end{quote}
+%
+The vector views are into the \code{partial\_} array.  The constructor
+is as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+OperandsAndPartials(const T1& x1, const T2& x2, const T3& x3)
+: n_(!is_constant_struct<T1>::value * length(x1)
+     + !is_constant_struct<T2>::value * length(x2)
+     + !is_constant_struct<T3>::value * length(x3)),
+  ops_(memalloc_.array_alloc<vari*>(n_)),
+  partials_(memalloc_.array_alloc<double>(n_)),
+  d_x1_(partials_),
+  d_x2_(partials_
+        + !is_constant_struct<T1>::value * length(x1)),
+  d_x3_(partials_
+        + !is_constant_struct<T1>::value * length(x1)),
+        + !is_constant_struct<T2>::value * length(x2)) 
+{ 
+  size_t base = 0;
+  if (!is_constant_struct<T1>::value)
+    base += set_varis<T1>::set(&ops_[base], x1);
+  if (!is_constant_struct<T2>::value)
+    base += set_varis<T2>::set(&ops_[base], x2);
+  if (!is_constant_struct<T3>::value)
+    base += set_varis<T3>::set(&ops_[base], x3);
+
+  std::fill(partials_, partials_ + n, 0);
+}
+\end{Verbatim}
+\end{quote}
+%
+The class template parameters \code{T1}, \code{T2}, and \code{T3}
+define the argument types for the constructor; these will be the
+arguments to a probability function and may be vectors or scalars of
+either primitive or autodiff type.  The size \code{n\_} of the
+operands and partials arrays is computed by summing the non-constant
+argument sizes; the function \code{length} is trivial and not shown.
+The operands \code{ops\_} and partials \code{partials\_} are allocated
+in the arena using a template function that allocates the right size
+memory and casts it to an array with elements of the specified
+template type.  The first partials view, \code{d\_x1\_}, starts at the
+start of \code{partials\_} itself.  Each subsequent view is started
+by incrementing the start of the last view;  this could perhaps be
+made more efficient by extracting the pointer from the previous view.
+
+The body of the constructor sets the operator values in \code{ops\_}
+and fills the partials array with zero values.  The operands are set
+using the static function \code{set} in the template class
+\code{set\_varis}, which extracts the \code{vari*} from the
+arguments.  
+
+The member function \code{to\_var} returns a \code{var} with
+an implementation of the following class, which simply stores the
+operands and partials and uses them for the chain rule.
+%
+\begin{quote}
+\begin{Verbatim}
+struct partials_vari : public vari {
+  const size_t N_;
+  vari** operands_;   
+  double* partials_;
+
+  partials_vari(double value, size_t N,
+                vari** operands, double* partials)
+  : vari(value), N_(N),
+    operands_(operands), partials_(partials) { }
+
+  void chain() {
+    for (size_t n = 0; n < N_; ++n)
+      operands_[n]->adj_ += adj_ * partials_[n];
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+The constructor passes the value to the superclass's constructor,
+\code{vari(double)}, then stores the size, operands, and partials.
+The \code{chain()} implementation just increments each operand's
+adjoint by the result's adjoint times the partial derivative of the
+result relative to the operand.
+
+\subsection{Example: Vectorization of the Normal Log Density}
 
 Continuing with the example of the normal probability density function
-introduced in \refsection{probability-functions}, 
+introduced in \refsection{probability-functions}, the pieces are now
+all in place to see how \code{normal\_log} is defined for reverse-mode
+autodiff with vectorization.
 
+The function signature is as follows
+%
+\begin{quote}
+\begin{Verbatim}
+template <bool propto, 
+          typename T_y, typename T_loc, typename T_scale>
+typename return_type<T_y,T_loc,T_scale>::type
+normal_log(const T_y& y, const T_loc& mu, const T_scale& sigma);
+... 
+\end{Verbatim}
+\end{quote}
+%
+The first boolean template parameter will be true if calculations are
+allowed to drop constant terms.  The remaining template parameters are
+the type of the arguments for the variable, and the location and scale
+parameters.  The result is the calculated return type, which will be
+\code{var} if any of the arguments is a (container of) \code{var} and
+\code{double} otherwise.
 
+The function begins by validating all of the inputs.
+%
+\begin{quote}
+\begin{Verbatim}
+  static const char* function("stan::prob::normal_log");
+  check_not_nan(function, "Random variable", y);
+  check_finite(function, "Location parameter", mu);
+  check_positive(function, "Scale parameter", sigma);
+  check_consistent_sizes(function, "Random variable", y,
+      "Location parameter", mu, "Scale parameter", sigma);
+\end{Verbatim}
+\end{quote}
+%
+The function name itself is provided as a static constant.  These
+functions raise exceptions with warning messages indicating where the
+problem arose.  The consistent size check ensures that all of the
+container types (if any) are of the same size.  For example, if both
+\code{y} and \code{mu} are vectors and \code{sigma} is a scalar, then
+\code{y} and \code{mu} must be of the same size.
 
+Next, the function returns zero if any of the container sizes is zero,
+or if none of the argument types is an autodiff variable and
+\code{propto} is true.  In either case, the function returns zero.
+%
+\begin{quote}
+\begin{Verbatim}
+  if (!(stan::length(y) && stan::length(mu) 
+        && stan::length(sigma)))
+    return 0.0;
+
+  if (!include_summand<propto,T_y,T_loc,T_scale>::value)
+    return 0.0;
+
+  double logp = 0;
+\end{Verbatim}
+\end{quote}
+%
+Only then is the accumulator \code{logp} for the result initialized.
+Then the operands and partials accumulator is initialized along with
+vector views of each of the arguments.  The size \code{N} is set to
+the maximum of the argument sizes (scalars are treated as size 1).
+% 
+\begin{quote}
+\begin{Verbatim}
+  OperandsAndPartials<T_y, T_loc, T_scale> 
+    operands_and_partials(y, mu, sigma);
+
+  VectorView<const T_y> y_vec(y);
+  VectorView<const T_loc> mu_vec(mu);
+  VectorView<const T_scale> sigma_vec(sigma);
+
+  size_t N = max_size(y, mu, sigma);
+\end{Verbatim}
+\end{quote}
+%
+Next, the vector builders for $\sigma^{-1}$ and $\log \sigma$ are
+constructed and filled.
+filled.
+%
+\begin{quote}
+\begin{Verbatim}
+  VectorBuilder<true, T_partials_return, T_scale> 
+    inv_sigma(length(sigma));
+  for (size_t i = 0; i < length(sigma); i++)
+    inv_sigma[i] = 1.0 / value_of(sigma_vec[i]);
+\end{Verbatim}
+\end{quote}
+%
+Although \code{inv\_sigma} is always filled, \code{log\_sigma} is not
+filled if the calculation is being done up to a proportion and the
+scale parameter is a constant.
+%
+\begin{quote}
+\begin{Verbatim}
+  VectorBuilder<include_summand<propto,T_scale>::value, 
+                T_partials_return, T_scale> 
+    log_sigma(length(sigma));
+  if (include_summand<propto,T_scale>::value)
+    for (size_t i = 0; i < length(sigma); i++)
+      log_sigma[i] = log(value_of(sigma_vec[i]));
+\end{Verbatim}
+\end{quote}
+%
+The value of \code{length(sigma)} will be 1 if \code{sigma} is a
+scalar and the size of the container otherwise.  Because the
+\code{include\_summand} traits metaprogram is evaluated statically,
+the compiler is smart enough to simply drop this whole loop if the
+summand should not be included.  As a result, exactly as many
+logarithms and inversions are calculated as necessary.  These values
+are then used in a loop over \code{N}, the size of the largest
+argument (1 if they are all scalars).
+%
+\begin{quote}
+\begin{Verbatim}
+  for (size_t n = 0; n < N; n++) {
+    double y_dbl = value_of(y_vec[n]);
+    double mu_dbl = value_of(mu_vec[n]);
+
+    double y_minus_mu_over_sigma 
+      = (y_dbl - mu_dbl) * inv_sigma[n];
+    double y_minus_mu_over_sigma_squared 
+      = y_minus_mu_over_sigma * y_minus_mu_over_sigma;
+
+    if (include_summand<propto>::value)
+      logp += NEG_LOG_SQRT_TWO_PI;
+    if (include_summand<propto,T_scale>::value)
+      logp -= log_sigma[n];
+    if (include_summand<propto,T_y,T_loc,T_scale>::value)
+      logp += NEGATIVE_HALF * y_minus_mu_over_sigma_squared;
+
+    double scaled_diff = inv_sigma[n] * y_minus_mu_over_sigma;
+    if (!is_constant_struct<T_y>::value)
+      operands_and_partials.d_x1_[n] -= scaled_diff;
+    if (!is_constant_struct<T_loc>::value)
+      operands_and_partials.d_x2_[n] += scaled_diff;
+    if (!is_constant_struct<T_scale>::value)
+      operands_and_partials.d_x3_[n] 
+        += inv_sigma[n] * (y_minus_mu_over_sigma_squared - 1);
+  }
+  return operands_and_partials.to_var(logp,y,mu,sigma);
+}
+\end{Verbatim}
+\end{quote}
+%
+In each iteration, the value of \code{y[n]} and \code{mu[n]} is
+extracted as a \code{double}.  Then the intermediate terms are
+calculated.  These are needed for every iteration (as long as not all
+arguments are constants, which was checked earlier in the function).  
+Then depending on the argument types, various terms are added or
+subtracted from the log density accumulator \code{logp}.  The
+normalizing term is only included if the \code{propto} template
+parameter is false.  The $\log \sigma$ term is only included if
+$\sigma$ is not a constant.  The remaining conditional should always
+succeed, but is written this way for consistency;  the compiler will
+remove it as its condition is evaluated statically.
+
+After the result is calculated, the derivatives are calcualted.  These
+are added to the \code{OperandsAndPartials} data structure using the
+views \code{d\_x1\_}, \code{d\_x2\_}, and \code{d\_x3\_}.  These are
+all analytical partial derivatives of the normal density with respect
+to its arguments.  The operands and partials structure initialized all
+derivatives to zero.  Here, they are incremented (or decremented).  If
+any of the arguments is a scalar, then the view is always of the same
+element and this effectively increments the single derivative.  Thus
+the same code works for a scalar or vector \code{sigma}, either
+breaking the partial across each argument, or reusing \code{sigma} and
+incrementing the partial.
+
+The final line just converts the result, with value and arguments, to
+a \code{var} for return.
 
 % \section{Software Process}
 
