@@ -1759,6 +1759,139 @@ additional size pointer.  There is also only a single virtual function
 call to \code{chain} that propagates derivatives for each argument.
 
 
+\subsection{Sum Accumulation}
+
+The \code{stan::agrad} library was developed to calculate gradients of
+log density functions, which are typically composed of sums of simpler
+log probability functions.  A typical structure used in a simple
+linear regression would be the following (though see
+\refsection{vectorization} for the vectorized implementation of
+\code{normal\_log}).
+%
+\begin{quote}
+\begin{Verbatim}
+var lp = 0;
+for (int n = 0; n < N; ++n)
+  lp += normal_log(y[n], x[n] * beta, sigma);
+\end{Verbatim}
+\end{quote}
+%
+This results in an expression tree structured as
+%
+\[
+(( \cdots ((p_1 + p_2) + p_3) + p_4) \cdots + p_{N-1}) + p_N).
+\]
+%
+This tree has $N-1$ nodes representing addition, each with two
+operands, for a total of $N-1$ virtual function calls to
+\code{chain()} requiring two addition operations each, for a total of
+$2(N-1)$ addition operations.
+
+It is a much more efficient use of resources (time and memory) to
+produce a single node with $N$ operands, requiring only a single
+virtual function call involving a total of $N$ addition operations.
+This can be achieved with the following variable implementation class.
+%
+\begin{quote}
+\begin{Verbatim}
+struct sum_v_vari : public vari {
+  vari** v_;
+  size_t length_;
+
+  sum_v_vari(const vector<var>& v) 
+  : vari(var_sum(v)), 
+    v_(ChainableStack::memalloc_.alloc_array<vari*>(v.size())),
+    length_(v.size())
+  {
+    for (size_t i = 0; i < length_; i++)
+      v_[i] = v(i).val();
+  }
+
+  void chain() {
+    for (size_t i = 0; i < N_; i++)
+      v_[i]->adj_ += adj_;
+  }
+};
+\end{Verbatim}
+\end{quote}
+%
+Although this class is used widely through \code{stan::agrad}, for
+simplicity, the only constructor shown is for a standard vector of
+autodiff variables, \code{vector<var>}.  
+
+The \code{var\_sum} function sums the values of the variables in the
+vector.  
+%
+\begin{quote}
+\begin{Verbatim}
+inline static double 
+var_sum(const vector<var>& v) {
+  double result = 0;
+  for (size_t i = 0; i < v.size(); ++i)
+    result += v[i].val();
+  return result;
+} 
+\end{Verbatim}
+\end{quote}
+%
+This sum is then passed to the superclass constructor, which stores
+the value (and the adjoint, which it initializes to zero).
+
+The following member template function of \code{stack\_alloc} allows
+arrays of any type to be allocated within the memory arena for
+automatic differentiation.
+%
+\begin{quote}
+\begin{Verbatim}
+template <typename T>
+inline T* alloc_array(size_t n) {
+  return static_cast<T*>(alloc(n * sizeof(T)));
+}
+\end{Verbatim}
+\end{quote}
+%
+The \code{alloc()} method does the allocation of the bytes in the
+arena, taking care to align them on an 8-byte boundary.  
+
+With the implementation in place, the sum function for vectors is
+trivial.
+%
+\begin{quote}
+\begin{Verbatim}
+inline var sum(const vector<var>& x) {
+  return var(new sum_v_vari(x));
+}
+\end{Verbatim}
+\end{quote}
+%
+More efficient special cases can be added for inputs of size zero, one
+and two, if these are common.
+%
+\begin{quote}
+\begin{Verbatim}
+  if (x.size() == 0) return 0.0;
+  if (x.size() == 1) return x[0];
+  if (x.size() == 2) return x[0] + x[1];
+\end{Verbatim}
+\end{quote}
+
+To deal with running sums in the context of log density definitions, 
+the intermediate values are pushed onto a \code{vector<var>} and then
+the \code{sum()} function is used to return their value.  The linear
+regression density would then be implemented as follows.
+%
+\begin{quote}
+\begin{Verbatim}
+vector<var> acc;
+for (int n = 0; n < y.size(); ++n)
+  acc.push_back(normal_log(y[n], x[n] * beta, sigma));
+var lp = sum(acc);
+\end{Verbatim}
+\end{quote}
+
+
+
+
 \section{Matrix Data Structures and Arithmetic}
 
 The \code{stan::agrad} library uses the Eigen C++ matrix library for
@@ -2027,19 +2160,6 @@ In addition to the value and adjoint stored by the parent class
 gradients along with their size.  The chain rule just propagates the
 gradients to the operands via the chain rule.
 
-The following member template function of \code{stack\_alloc} allows
-arrays of any type to be allocated within the memory arena for
-automatic differentiation.
-%
-\begin{quote}
-\begin{Verbatim}
-template <typename T>
-inline T* alloc_array(size_t n) {
-  return static_cast<T*>(alloc(n * sizeof(T)));
-}
-\end{Verbatim}
-\end{quote}
-%
 The log gradient function uses this allocation method to populate a
 precomputed gradients variable implementation.
 
