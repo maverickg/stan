@@ -41,7 +41,7 @@ TEST(ProbDistributionsMultinomial,Propto) {
 
 using stan::prob::multinomial_log;
 
-TEST(ProbDistributionsMultinomial,DefaultPolicy) {
+TEST(ProbDistributionsMultinomial, error) {
   double nan = std::numeric_limits<double>::quiet_NaN();
   double inf = std::numeric_limits<double>::infinity();
 
@@ -77,7 +77,7 @@ TEST(ProbDistributionsMultinomial,DefaultPolicy) {
   theta(2) = 0.5;
   
   ns.resize(2);
-  EXPECT_THROW(multinomial_log(ns, theta), std::domain_error);
+  EXPECT_THROW(multinomial_log(ns, theta), std::invalid_argument);
 }
 
 TEST(ProbDistributionsMultinomial, zeros) {

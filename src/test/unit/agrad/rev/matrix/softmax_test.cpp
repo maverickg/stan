@@ -24,7 +24,7 @@ TEST(AgradRevMatrix,softmaxLeak) {
     Matrix<var,Dynamic,1> theta = softmax(x);
   }
   // test is greater than because leak is on heap, not stack
-  EXPECT_TRUE(stan::agrad::memalloc_.bytes_allocated() > 200000);
+  EXPECT_TRUE(stan::agrad::ChainableStack::memalloc_.bytes_allocated() > 200000);
 }
 
 TEST(AgradRevMatrix,softmax) {
@@ -34,7 +34,7 @@ TEST(AgradRevMatrix,softmax) {
   using Eigen::Dynamic;
   using stan::agrad::vector_v;
 
-  EXPECT_THROW(softmax(vector_v()),std::domain_error);
+  EXPECT_THROW(softmax(vector_v()),std::invalid_argument);
   
   Matrix<AVAR,Dynamic,1> x(1);
   x << 0.0;

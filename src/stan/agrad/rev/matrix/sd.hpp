@@ -23,7 +23,7 @@ namespace stan {
       var calc_sd(size_t size,
                   const var* dtrs) {
         using std::sqrt;
-        vari** varis = (vari**) memalloc_.alloc(size * sizeof(vari*));
+        vari** varis = (vari**) ChainableStack::memalloc_.alloc(size * sizeof(vari*));
         for (size_t i = 0; i < size; ++i)
           varis[i] = dtrs[i].vi_;
         double sum = 0.0;
@@ -37,7 +37,7 @@ namespace stan {
         }
         double variance = sum_of_squares / (size - 1);
         double sd = sqrt(variance);
-        double* partials = (double*) memalloc_.alloc(size * sizeof(double));
+        double* partials = (double*) ChainableStack::memalloc_.alloc(size * sizeof(double));
         if (sum_of_squares < 1e-20) {
           double grad_limit = 1 / std::sqrt((double)size);
           for (size_t i = 0; i < size; ++i)
@@ -61,7 +61,7 @@ namespace stan {
      * @return sample standard deviation of specified vector
      */
     var sd(const std::vector<var>& v) {
-      stan::error_handling::check_nonzero_size("sd", "v", v);
+      stan::math::check_nonzero_size("sd", "v", v);
       if (v.size() == 1) return 0;
       return calc_sd(v.size(), &v[0]);
     }
@@ -78,7 +78,7 @@ namespace stan {
      */
     template <int R, int C>
     var sd(const Eigen::Matrix<var,R,C>& m) {
-      stan::error_handling::check_nonzero_size("sd", "m", m);
+      stan::math::check_nonzero_size("sd", "m", m);
       if (m.size() == 1) return 0;
       return calc_sd(m.size(), &m(0));
     }

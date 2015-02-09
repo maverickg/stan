@@ -89,7 +89,7 @@ namespace stan {
         }
         inline void initialize(vari** &mem_v, const var *inv, vari **shared = NULL) {
           if (shared == NULL) {
-            mem_v = (vari**)memalloc_.alloc(length_*sizeof(vari*));
+            mem_v = (vari**)ChainableStack::memalloc_.alloc(length_*sizeof(vari*));
             for (size_t i = 0; i < length_; i++)
               mem_v[i] = inv[i].vi_;
           }
@@ -100,7 +100,7 @@ namespace stan {
         template<typename Derived>
         inline void initialize(vari** &mem_v, const Eigen::DenseBase<Derived> &inv, vari **shared = NULL) {
           if (shared == NULL) {
-            mem_v = (vari**)memalloc_.alloc(length_*sizeof(vari*));
+            mem_v = (vari**)ChainableStack::memalloc_.alloc(length_*sizeof(vari*));
             for (size_t i = 0; i < length_; i++)
               mem_v[i] = inv(i).vi_;
           }
@@ -111,7 +111,7 @@ namespace stan {
         
         inline void initialize(double* &mem_d, const double *ind, double *shared = NULL) {
           if (shared == NULL) {
-            mem_d = (double*)memalloc_.alloc(length_*sizeof(double));
+            mem_d = (double*)ChainableStack::memalloc_.alloc(length_*sizeof(double));
             for (size_t i = 0; i < length_; i++)
               mem_d[i] = ind[i];
           }
@@ -122,7 +122,7 @@ namespace stan {
         template<typename Derived>
         inline void initialize(double* &mem_d, const Eigen::DenseBase<Derived> &ind, double *shared = NULL) {
           if (shared == NULL) {
-            mem_d = (double*)memalloc_.alloc(length_*sizeof(double));
+            mem_d = (double*)ChainableStack::memalloc_.alloc(length_*sizeof(double));
             for (size_t i = 0; i < length_; i++)
               mem_d[i] = ind(i);
           }
@@ -212,9 +212,9 @@ namespace stan {
                                 boost::is_same<T2,var>::value, var>::type
     dot_product(const Eigen::Matrix<T1, R1, C1>& v1, 
                 const Eigen::Matrix<T2, R2, C2>& v2) {
-      stan::error_handling::check_vector("dot_product", "v1", v1);
-      stan::error_handling::check_vector("dot_product", "v2", v2);
-      stan::error_handling::check_matching_sizes("dot_product",
+      stan::math::check_vector("dot_product", "v1", v1);
+      stan::math::check_vector("dot_product", "v2", v2);
+      stan::math::check_matching_sizes("dot_product",
                                                  "v1", v1,
                                                  "v2", v2);
       return var(new dot_product_vari<T1,T2>(v1,v2));
@@ -249,7 +249,7 @@ namespace stan {
                                 boost::is_same<T2,var>::value, var>::type
     dot_product(const std::vector<T1>& v1,
                 const std::vector<T2>& v2) {
-      stan::error_handling::check_matching_sizes("dot_product",
+      stan::math::check_matching_sizes("dot_product",
                                                  "v1", v1,
                                                  "v2", v2);
       return var(new dot_product_vari<T1,T2>(&v1[0], &v2[0], v1.size()));
@@ -262,7 +262,7 @@ namespace stan {
                                 Eigen::Matrix<var, 1, C1> >::type
     columns_dot_product(const Eigen::Matrix<T1, R1, C1>& v1, 
                         const Eigen::Matrix<T2, R2, C2>& v2) {
-      stan::error_handling::check_matching_sizes("dot_product",
+      stan::math::check_matching_sizes("dot_product",
                                                  "v1", v1,
                                                  "v2", v2);
       Eigen::Matrix<var, 1, C1> ret(1,v1.cols());
@@ -279,7 +279,7 @@ namespace stan {
                                 Eigen::Matrix<var, R1, 1> >::type
     rows_dot_product(const Eigen::Matrix<T1, R1, C1>& v1, 
                      const Eigen::Matrix<T2, R2, C2>& v2) {
-      stan::error_handling::check_matching_sizes("dot_product",
+      stan::math::check_matching_sizes("dot_product",
                                                  "v1", v1,
                                                  "v2", v2);
       Eigen::Matrix<var, R1, 1> ret(v1.rows(),1);

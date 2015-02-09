@@ -164,7 +164,7 @@ TEST(ProbDistributionsMultiStudentT,Nu) {
 }
 
 
-TEST(ProbDistributionsMultiStudentT,PolicySize1) {
+TEST(ProbDistributionsMultiStudentT,ErrorSize1) {
   Matrix<double,Dynamic,1> y(2,1);
   y << 2.0, -2.0;
   Matrix<double,Dynamic,1> mu(3,1);
@@ -175,10 +175,10 @@ TEST(ProbDistributionsMultiStudentT,PolicySize1) {
     0.0, 0.0, 5.0;
   double nu = 4.0;
 
-  EXPECT_THROW(multi_student_t_log(y,nu,mu,Sigma),std::domain_error);
+  EXPECT_THROW(multi_student_t_log(y,nu,mu,Sigma),std::invalid_argument);
 }
 
-TEST(ProbDistributionsMultiStudentT,PolicySize2) {
+TEST(ProbDistributionsMultiStudentT,ErrorSize2) {
   Matrix<double,Dynamic,1> y(3,1);
   y << 2.0, -2.0, 11.0;
   Matrix<double,Dynamic,1> mu(3,1);
@@ -188,10 +188,10 @@ TEST(ProbDistributionsMultiStudentT,PolicySize2) {
     -3.0,  4.0, 0.0;
   double nu = 4.0;
 
-  EXPECT_THROW(multi_student_t_log(y,nu,mu,Sigma),std::domain_error);
+  EXPECT_THROW(multi_student_t_log(y,nu,mu,Sigma),std::invalid_argument);
 }
 
-TEST(ProbDistributionsMultiStudentT,PolicySize3) {
+TEST(ProbDistributionsMultiStudentT,ErrorSize3) {
   Matrix<double,Dynamic,1> y(3,1);
   y << 2.0, -2.0, 11.0;
   Matrix<double,Dynamic,1> mu(3,1);
@@ -201,7 +201,7 @@ TEST(ProbDistributionsMultiStudentT,PolicySize3) {
     -3.0,  4.0, 0.0;
   double nu = 4.0;
 
-  EXPECT_THROW(multi_student_t_log(y,nu,mu,Sigma),std::domain_error);
+  EXPECT_THROW(multi_student_t_log(y,nu,mu,Sigma),std::invalid_argument);
 }
 
 TEST(ProbDistributionsMultiStudentT,ProptoAllDoublesZero) {
