@@ -1,10 +1,11 @@
-#ifndef __STAN__AGRAD__FWD__MATRIX__TYPEDEFS_HPP__
-#define __STAN__AGRAD__FWD__MATRIX__TYPEDEFS_HPP__
+#ifndef STAN__AGRAD__FWD__MATRIX__TYPEDEFS_HPP
+#define STAN__AGRAD__FWD__MATRIX__TYPEDEFS_HPP
 
 #include <stan/math/matrix/Eigen.hpp>
 #include <stan/agrad/fwd/fvar.hpp>
 #include <stan/agrad/rev/var.hpp>
 #include <stan/agrad/fwd/numeric_limits.hpp>
+#include <stan/agrad/fwd/matrix/Eigen_NumTraits.hpp>
 
 namespace stan {
   namespace agrad {

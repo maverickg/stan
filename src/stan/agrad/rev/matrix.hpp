@@ -1,5 +1,5 @@
-#ifndef __STAN__AGRAD__REV__MATRIX_HPP__
-#define __STAN__AGRAD__REV__MATRIX_HPP__
+#ifndef STAN__AGRAD__REV__MATRIX_HPP
+#define STAN__AGRAD__REV__MATRIX_HPP
 
 #include <stan/agrad/rev/matrix/Eigen_NumTraits.hpp>
 #include <stan/agrad/rev/matrix/LDLT_alloc.hpp>
@@ -37,7 +37,6 @@
 #include <stan/agrad/rev/matrix/trace_inv_quad_form_ldlt.hpp>
 #include <stan/agrad/rev/matrix/trace_quad_form.hpp>
 #include <stan/agrad/rev/matrix/typedefs.hpp>
-#include <stan/agrad/rev/matrix/value_of.hpp>
 #include <stan/agrad/rev/matrix/variance.hpp>
 
 #endif

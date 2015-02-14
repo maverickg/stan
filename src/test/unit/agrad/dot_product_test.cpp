@@ -2,7 +2,9 @@
 #include <test/unit/agrad/util.hpp>
 #include <stan/math/matrix.hpp>
 #include <stan/agrad/rev/matrix.hpp>
-#include <stan/agrad/rev/jacobian.hpp>
+
+// this didn't need to be external, so it's here now:
+
 
 TEST(AgradRevMatrix, dot_product_vv) {
   AVEC a, b;
@@ -186,7 +188,8 @@ TEST(AgradRevMatrix,softmax) {
   using Eigen::Dynamic;
   using stan::agrad::vector_v;
 
-  EXPECT_THROW(softmax(vector_v()),std::domain_error);
+  EXPECT_THROW(softmax(vector_v()),
+               std::invalid_argument);
   
   Matrix<AVAR,Dynamic,1> x(1);
   x << 0.0;
@@ -213,7 +216,8 @@ TEST(AgradRevMatrix,softmax) {
 TEST(AgradRevMatrix, meanStdVector) {
   using stan::math::mean; // should use arg-dep lookup
   AVEC x(0);
-  EXPECT_THROW(mean(x), std::domain_error);
+  EXPECT_THROW(mean(x), 
+               std::invalid_argument);
   x.push_back(1.0);
   EXPECT_FLOAT_EQ(1.0, mean(x).val());
   x.push_back(2.0);
@@ -1091,4 +1095,6 @@ TEST(AgradRevMatrix, promoter) {
 
 
 }
+
+
 
